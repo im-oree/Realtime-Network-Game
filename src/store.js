@@ -6,6 +6,7 @@ export const useStore = create((set, get) => ({
   connected:    false,
   myId:         null,
   roomId:       null,
+  offlineMode:  false,
 
   // World
   players:      {},
@@ -48,6 +49,7 @@ export const useStore = create((set, get) => ({
   setConnected:  (v) => set({ connected: v }),
   setMyId:       (id) => set({ myId: id }),
   setRoomId:     (id) => set({ roomId: id }),
+  setOfflineMode: (v) => set({ offlineMode: v }),
   setPaused:     (v) => set({ paused: v }),
   setShowScoreboard: (v) => set({ showScoreboard: v }),
   setMobileMode: (v) => set({ isMobileMode: v }),
@@ -82,6 +84,7 @@ export const useStore = create((set, get) => ({
   leaveGame: () => set({
     screen:  'menu',
     roomId:  null,
+    offlineMode: false,
     players: {},
     playersExtrapolated: {},
     projectiles: [],

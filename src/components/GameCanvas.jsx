@@ -48,6 +48,7 @@ export default function GameCanvas() {
       if (!state.paused && state.screen === 'playing') {
         // Update client-side physics for smooth local movement
         client.updateClientPhysics(Math.min(dt, 0.05)) // Cap dt to prevent large jumps
+        client.updateOfflineSimulation(Math.min(dt, 0.05))
       }
       
       gameLoopRaf = requestAnimationFrame(gameLoop)

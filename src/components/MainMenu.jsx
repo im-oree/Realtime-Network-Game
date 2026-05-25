@@ -33,6 +33,13 @@ export default function MainMenu() {
     client.quickJoin(name)
   }
 
+  const startOffline = () => {
+    const name = username.trim() || 'Player'
+    saveUsername(name)
+    client.startOfflinePractice(name)
+    useStore.getState().setScreen('playing')
+  }
+
   const matchmake = () => {
     const name = username.trim() || 'Player'
     saveUsername(name)
@@ -72,6 +79,13 @@ export default function MainMenu() {
             disabled={!connected}
           >
             Quick Play
+          </button>
+
+          <button
+            className="menu-btn secondary large"
+            onClick={startOffline}
+          >
+            Offline Practice
           </button>
 
           <button
