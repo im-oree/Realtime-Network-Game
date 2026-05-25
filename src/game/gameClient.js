@@ -37,10 +37,9 @@ class GameClient {
       if (data.map)     useStore.getState().setMapData(data.map)
       if (data.weapons) useStore.getState().setWeapons(data.weapons)
       if (data.snapshot) {
-        useStore.getState().setWorld({
-          ...data.snapshot,
-          myId: this.socket.id
-        })
+        const snapshotWorld = { ...data.snapshot, myId: this.socket.id }
+        useStore.getState().setWorld(snapshotWorld)
+        useStore.getState().setPredictedPlayer(snapshotWorld.players?.[this.socket.id] ? { ...snapshotWorld.players[this.socket.id] } : null)
         if (data.map) {
           if (!this.clientPhysics) {
             this.clientPhysics = new ClientPhysics(
@@ -79,28 +78,30 @@ class GameClient {
           this.pendingInputs.shift()
         }
 
-        if (state.players?.[myId]) {
-          const reconciled = { ...serverPlayer }
+        const basePlayer = state.predictedPlayer || state.players?.[myId] || serverPlayer
+        const reconciled = { ...basePlayer, ...serverPlayer }
 
+        if (!reconciled.dead) {
           for (const inp of this.pendingInputs) {
             this.clientPhysics?.update(reconciled, inp, inp.dt ?? (TICK_MS / 1000))
           }
-
-          nextWorld.players[myId] = {
-            ...serverPlayer,
-            ...reconciled,
-            id: serverPlayer.id || myId,
-            hp: serverPlayer.hp,
-            armor: serverPlayer.armor,
-            ammo: serverPlayer.ammo,
-            weapon: serverPlayer.weapon,
-            kills: serverPlayer.kills,
-            deaths: serverPlayer.deaths,
-            dead: serverPlayer.dead,
-            respawnTimer: serverPlayer.respawnTimer,
-            lastProcessedSeq: serverPlayer.lastProcessedSeq
-          }
         }
+
+        useStore.getState().setPredictedPlayer({
+          ...reconciled,
+          id: myId,
+          hp: serverPlayer.hp,
+          armor: serverPlayer.armor,
+          ammo: serverPlayer.ammo,
+          weapon: serverPlayer.weapon,
+          kills: serverPlayer.kills,
+          deaths: serverPlayer.deaths,
+          dead: serverPlayer.dead,
+          respawnTimer: serverPlayer.respawnTimer,
+          lastProcessedSeq: serverPlayer.lastProcessedSeq,
+          color: serverPlayer.color,
+          username: serverPlayer.username
+        })
       }
 
       this.lastAuthoritativeWorld = nextWorld
@@ -160,7 +161,7 @@ class GameClient {
     
     const state = useStore.getState()
     const myId = state.myId
-    const myPlayer = state.players?.[myId]
+    const myPlayer = state.predictedPlayer || state.players?.[myId]
     
     if (!myPlayer || myPlayer.dead) return
 
@@ -169,15 +170,10 @@ class GameClient {
     }
     
     // Apply client-side physics prediction
-    this.clientPhysics.update(myPlayer, this.localInput, dt)
+    const predicted = { ...myPlayer }
+    this.clientPhysics.update(predicted, this.localInput, dt)
     
-    // Update store with new position
-    useStore.setState(s => ({
-      players: {
-        ...s.players,
-        [myId]: { ...myPlayer }
-      }
-    }))
+    useStore.getState().setPredictedPlayer(predicted)
   }
 
   sendAim(angle) {

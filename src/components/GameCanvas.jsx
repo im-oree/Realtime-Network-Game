@@ -57,7 +57,7 @@ export default function GameCanvas() {
     // Input tick - sends input to server at fixed rate
     const inputTick = setInterval(() => {
       const state = useStore.getState()
-      const me = state.players[state.myId]
+      const me = state.predictedPlayer || state.players[state.myId]
       if (!me || me.dead || state.paused) return
 
       const isMobileMode = state.isMobileMode
@@ -110,7 +110,6 @@ export default function GameCanvas() {
       client.sendAim(angle)
 
       // Shoot (auto-fire support)
-      const wpn = state.weapons?.[me.weapon]
       if (inputManager.isPressed('shoot')) {
         client.shoot(angle)
       }

@@ -1,6 +1,6 @@
 // ─── Minimap ────────────────────────────────────────────────────────────────────
 
-export function drawMinimap(ctx, canvasW, canvasH, mapData, players, myId, pickups, isMobile=false) {
+export function drawMinimap(ctx, canvasW, canvasH, mapData, players, myId, pickups, isMobile=false, predictedPlayer=null) {
   if (!mapData) return
   const mmW = 160, mmH = 90, pad = 10
   const mx = canvasW - mmW - pad
@@ -37,7 +37,12 @@ export function drawMinimap(ctx, canvasW, canvasH, mapData, players, myId, picku
   }
 
   // Players
-  for (const [id, p] of Object.entries(players || {})) {
+  const visiblePlayers = { ...(players || {}) }
+  if (predictedPlayer && myId) {
+    visiblePlayers[myId] = predictedPlayer
+  }
+
+  for (const [id, p] of Object.entries(visiblePlayers)) {
     if (p.dead) continue
     const px = mx + p.x * scaleX
     const py = my + p.y * scaleY

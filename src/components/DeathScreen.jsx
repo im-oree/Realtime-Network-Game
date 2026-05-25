@@ -4,7 +4,8 @@ import { useStore } from '../store'
 export default function DeathScreen() {
   const myId    = useStore(s => s.myId)
   const players = useStore(s => s.players)
-  const me      = players[myId]
+  const predictedPlayer = useStore(s => s.predictedPlayer)
+  const me      = predictedPlayer || players[myId]
 
   if (!me || !me.dead) return null
 

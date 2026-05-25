@@ -4,8 +4,9 @@ import { useStore } from '../store'
 export default function HUD() {
   const myId    = useStore(s => s.myId)
   const players = useStore(s => s.players)
+  const predictedPlayer = useStore(s => s.predictedPlayer)
   const weapons = useStore(s => s.weapons)
-  const me      = players[myId]
+  const me      = predictedPlayer || players[myId]
   const isMobile = useStore(s => s.isMobileMode)
 
   if (!me || me.dead) return null

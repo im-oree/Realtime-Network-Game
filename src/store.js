@@ -9,6 +9,7 @@ export const useStore = create((set, get) => ({
 
   // World
   players:      {},
+  predictedPlayer: null,
   projectiles:  [],
   grenades:     [],
   gasClouds:    [],
@@ -47,6 +48,7 @@ export const useStore = create((set, get) => ({
 
   setMapData: (data) => set({ mapData: data }),
   setWeapons: (w)    => set({ weapons: w }),
+  setPredictedPlayer: (player) => set({ predictedPlayer: player }),
 
   setWorld: (world) => set(state => ({
     players:     world.players     ?? state.players,
@@ -70,6 +72,7 @@ export const useStore = create((set, get) => ({
     pickups: [],
     scores: {},
     mapData: null,
+    predictedPlayer: null,
     paused:  false
   })
 }))

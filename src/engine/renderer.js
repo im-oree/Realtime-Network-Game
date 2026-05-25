@@ -47,7 +47,7 @@ export class GameRenderer {
   render(dt, now) {
     const state = this.getState()
     const { players, projectiles, grenades, gasClouds, pickups, scores,
-            mapData, mapSize, myId, events, weapons, paused, showScoreboard } = state
+            mapData, mapSize, myId, events, weapons, paused, showScoreboard, predictedPlayer } = state
 
     const canvas = this.canvas
     const ctx    = this.ctx
@@ -154,7 +154,7 @@ export class GameRenderer {
     this.killFeed.update(dt)
 
     // ── Camera ──────────────────────────────────────────────────────────────
-    const me = players[myId]
+    const me = predictedPlayer || players[myId]
     if (me && !me.dead) {
       // Sniper zoom
       const wpn = weapons?.[me.weapon]
@@ -190,7 +190,12 @@ export class GameRenderer {
     drawGrenades(ctx, grenades, now)
 
     // Players (draw self last for on-top)
-    const sortedPlayers = Object.entries(players || {}).sort(([a], [b]) => {
+    const visiblePlayers = { ...(players || {}) }
+    if (predictedPlayer && myId) {
+      visiblePlayers[myId] = predictedPlayer
+    }
+
+    const sortedPlayers = Object.entries(visiblePlayers).sort(([a], [b]) => {
       if (a === myId) return 1
       if (b === myId) return -1
       return 0
@@ -223,7 +228,7 @@ export class GameRenderer {
     }
 
     // Minimap (pass mobile flag so it can be drawn top-right for mobile)
-    drawMinimap(ctx, vWidth, vHeight, mapData, players, myId, pickups, state.isMobileMode)
+    drawMinimap(ctx, vWidth, vHeight, mapData, players, myId, pickups, state.isMobileMode, predictedPlayer)
 
     // Respawn overlay
     if (me && me.dead) {
