@@ -18,7 +18,8 @@ This README is the full project documentation for the codebase. It explains what
 10. [Maps and Weapons](#maps-and-weapons)
 11. [Storage and Settings](#storage-and-settings)
 12. [How to Run the Project](#how-to-run-the-project)
-13. [Notes and Current Limitations](#notes-and-current-limitations)
+13. [Deployment Environment Variables](#deployment-environment-variables)
+14. [Notes and Current Limitations](#notes-and-current-limitations)
 
 ## Project Overview
 
@@ -220,7 +221,7 @@ Each player tracks data such as:
 
 ### Connection Setup
 
-The client creates a Socket.io connection from `src/game/gameClient.js`. When the app runs on localhost and the frontend is not already on port 3000, it connects to the backend at `http://localhost:3000`.
+The client creates a Socket.io connection from `src/game/gameClient.js`. The backend base URL comes from `VITE_API_BASE_URL`, which defaults to `http://localhost:3000` for local development.
 
 ### Server Events
 
@@ -267,6 +268,45 @@ The server runs a fixed game loop at 60 ticks per second. Every tick it:
 ### Reconciliation
 
 The client stores pending movement inputs with sequence numbers. When a new world state arrives, it uses the last processed sequence reported by the server to clear acknowledged inputs and replay any remaining ones. That keeps the local player position close to the authoritative state.
+
+## Deployment Environment Variables
+
+For Vercel + Render, I only need two public values:
+
+### Frontend on Vercel
+
+Set this in the Vercel project environment variables:
+
+```bash
+VITE_API_BASE_URL=https://your-backend.onrender.com
+```
+
+This value is used for both REST calls and Socket.IO connections.
+
+### Backend on Render
+
+Set this in the Render service environment variables:
+
+```bash
+CORS_ORIGIN=https://your-frontend.vercel.app
+```
+
+If I want to allow more than one frontend origin, I can separate them with commas:
+
+```bash
+CORS_ORIGIN=https://your-frontend.vercel.app,https://your-preview.vercel.app
+```
+
+### Local Development Defaults
+
+If I am running locally, these are the values to use:
+
+```bash
+VITE_API_BASE_URL=http://localhost:3000
+CORS_ORIGIN=http://localhost:5173
+```
+
+The frontend falls back to `http://localhost:3000` when `VITE_API_BASE_URL` is not set, but for Vercel I should set the env explicitly.
 
 ## Rendering and UI
 

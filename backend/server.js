@@ -8,12 +8,51 @@ const { WEAPONS }   = require('./weapons')
 
 const app    = express()
 const root   = path.join(__dirname, '..')
+
+function parseAllowedOrigins(value) {
+  const origins = typeof value === 'string'
+    ? value.split(',').map(origin => origin.trim()).filter(Boolean)
+    : []
+  return origins.length ? origins : ['*']
+}
+
+const allowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGIN || process.env.FRONTEND_ORIGIN)
+
+function isOriginAllowed(origin) {
+  if (!origin) return true
+  if (allowedOrigins.includes('*')) return true
+  return allowedOrigins.includes(origin)
+}
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  if (origin && !isOriginAllowed(origin)) {
+    return res.sendStatus(403)
+  }
+
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? '*' : origin)
+    res.setHeader('Vary', 'Origin')
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204)
+  }
+
+  next()
+})
+
 app.use(express.static(path.join(root, 'dist')))
 app.use(express.static(root))
 
 const server = http.createServer(app)
 const io     = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: {
+    origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
+    methods: ['GET', 'POST']
+  },
   pingInterval: 2000,
   pingTimeout: 5000
 })

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../store'
 import { loadUsername } from '../config'
 import client from '../game/gameClient'
+import { apiUrl } from '../game/network'
 
 export default function RoomBrowser() {
   const [rooms, setRooms] = useState([])
@@ -14,7 +15,7 @@ export default function RoomBrowser() {
       setLoading(false)
     })
     // Also try REST
-    fetch('/rooms').then(r => r.json()).then(d => {
+    fetch(apiUrl('/rooms')).then(r => r.json()).then(d => {
       setRooms(d.rooms || [])
       setLoading(false)
     }).catch(() => setLoading(false))

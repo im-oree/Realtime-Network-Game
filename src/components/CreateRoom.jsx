@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { useStore } from '../store'
 import { loadUsername } from '../config'
 import client from '../game/gameClient'
+import { apiUrl } from '../game/network'
 
 export default function CreateRoom() {
   const [mapId, setMapId] = useState('forest')
   const [maps, setMaps]   = useState([])
 
   useEffect(() => {
-    fetch('/maps').then(r => r.json()).then(d => setMaps(d.maps || [])).catch(() => {})
+    fetch(apiUrl('/maps')).then(r => r.json()).then(d => setMaps(d.maps || [])).catch(() => {})
   }, [])
 
   const create = () => {

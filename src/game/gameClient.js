@@ -1,6 +1,7 @@
 import { io }          from 'socket.io-client'
 import { useStore }    from '../store'
 import { PLAYER_SPEED, TICK_MS } from '../config'
+import { getApiBaseUrl } from './network'
 
 class GameClient {
   constructor() {
@@ -12,14 +13,7 @@ class GameClient {
   connect() {
     if (this.socket?.connected) return
 
-    let url
-    try {
-      if (location.hostname === 'localhost' && location.port !== '3000') {
-        url = 'http://localhost:3000'
-      }
-    } catch (_) {}
-
-    this.socket = io(url, { transports: ['websocket'] })
+    this.socket = io(getApiBaseUrl(), { transports: ['websocket'] })
 
     this.socket.on('connect', () => {
       useStore.getState().setMyId(this.socket.id)
