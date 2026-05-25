@@ -1,0 +1,8 @@
+*{box-sizing:border-box;font-family:Inter, Arial, sans-serif}
+body{margin:0;background:#0f172a;color:#e6eef8}
+.app{padding:16px;max-width:900px;margin:0 auto}
+header h1{margin:0;font-size:20px}
+.board{display:grid;gap:2px;margin:16px 0;background:#111;padding:8px}
+.cell{width:22px;height:22px;border-radius:2px;border:1px solid rgba(0,0,0,0.08)}
+.cell.me{outline:2px solid #fff}
+footer{color:#9fb0c7}
