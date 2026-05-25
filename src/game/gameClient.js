@@ -131,10 +131,9 @@ class GameClient {
           color: serverPlayer.color,
           username: serverPlayer.username
         })
-        // Merge cheats flags if present
-        const existing = useStore.getState().predictedPlayer || {}
         if (serverPlayer.cheats) {
-          useStore.getState().setPredictedPlayer(p => ({ ...p, cheats: { ...(existing.cheats || {}), ...serverPlayer.cheats } }))
+          const existing = useStore.getState().predictedPlayer || {}
+          useStore.getState().setPredictedPlayer({ ...existing, ...serverPlayer, cheats: { ...(existing.cheats || {}), ...serverPlayer.cheats } })
         }
       }
 
@@ -179,14 +178,8 @@ class GameClient {
     this.socket.on('cheats_updated', ({ cheats }) => {
       if (cheats) {
         useStore.getState().setCheats(cheats)
-        const state = useStore.getState()
-        const myId = state.myId
-        if (myId && state.predictedPlayer) {
-          useStore.getState().setPredictedPlayer({
-            ...state.predictedPlayer,
-            cheats: { ...state.predictedPlayer.cheats, ...cheats }
-          })
-        }
+        const existing = useStore.getState().predictedPlayer || {}
+        useStore.getState().setPredictedPlayer({ ...existing, cheats: { ...(existing.cheats || {}), ...cheats } })
       }
     })
   }
