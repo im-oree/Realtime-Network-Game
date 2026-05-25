@@ -47,7 +47,11 @@ export class GameRenderer {
   render(dt, now) {
     const state = this.getState()
     const { players, projectiles, grenades, gasClouds, pickups, scores,
-            mapData, mapSize, myId, events, weapons, paused, showScoreboard, predictedPlayer } = state
+            mapData, mapSize, myId, events, weapons, paused, showScoreboard, predictedPlayer, playersExtrapolated } = state
+    
+    // Use extrapolated player positions for smooth remote player movement
+    // Falls back to server positions if extrapolation unavailable
+    const renderPlayers = playersExtrapolated || players
 
     const canvas = this.canvas
     const ctx    = this.ctx
@@ -190,7 +194,7 @@ export class GameRenderer {
     drawGrenades(ctx, grenades, now)
 
     // Players (draw self last for on-top)
-    const visiblePlayers = { ...(players || {}) }
+    const visiblePlayers = { ...renderPlayers }
     if (predictedPlayer && myId) {
       visiblePlayers[myId] = predictedPlayer
     }
@@ -228,7 +232,7 @@ export class GameRenderer {
     }
 
     // Minimap (pass mobile flag so it can be drawn top-right for mobile)
-    drawMinimap(ctx, vWidth, vHeight, mapData, players, myId, pickups, state.isMobileMode, predictedPlayer)
+    drawMinimap(ctx, vWidth, vHeight, mapData, renderPlayers, myId, pickups, state.isMobileMode, predictedPlayer)
 
     // Respawn overlay
     if (me && me.dead) {

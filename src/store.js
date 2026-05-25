@@ -9,6 +9,7 @@ export const useStore = create((set, get) => ({
 
   // World
   players:      {},
+  playersExtrapolated: {}, // Extrapolated positions for smooth remote player movement
   predictedPlayer: null,
   projectiles:  [],
   grenades:     [],
@@ -67,6 +68,7 @@ export const useStore = create((set, get) => ({
 
   setWorld: (world) => set(state => ({
     players:     world.players     ?? state.players,
+    playersExtrapolated: world.playersExtrapolated ?? world.players ?? state.playersExtrapolated,
     projectiles: world.projectiles ?? state.projectiles,
     grenades:    world.grenades    ?? state.grenades,
     gasClouds:   world.gasClouds   ?? state.gasClouds,
@@ -81,6 +83,7 @@ export const useStore = create((set, get) => ({
     screen:  'menu',
     roomId:  null,
     players: {},
+    playersExtrapolated: {},
     projectiles: [],
     grenades: [],
     gasClouds: [],

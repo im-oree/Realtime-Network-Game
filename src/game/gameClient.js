@@ -16,6 +16,8 @@ class GameClient {
     this.lastAuthoritativeWorld = null
     this.roomPlayers   = new Set() // Track players in room for WebRTC connections
     this.webrtcEnabled = true // Can be disabled if problems occur
+    this.playerPreviousPositions = {} // Track previous positions for extrapolation
+    this.localSimulationEnabled = true
   }
 
   connect() {
@@ -103,21 +105,16 @@ class GameClient {
         const serverPlayer = nextWorld.players[myId]
         const lastAck = serverPlayer.lastProcessedSeq || 0
 
+        // Remove acknowledged inputs from queue
         while (this.pendingInputs.length && this.pendingInputs[0].seq <= lastAck) {
           this.pendingInputs.shift()
         }
 
-        const basePlayer = state.predictedPlayer || state.players?.[myId] || serverPlayer
-        const reconciled = { ...basePlayer, ...serverPlayer }
-
-        if (!reconciled.dead) {
-          for (const inp of this.pendingInputs) {
-            this.clientPhysics?.update(reconciled, inp, inp.dt ?? (TICK_MS / 1000))
-          }
-        }
-
-        useStore.getState().setPredictedPlayer({
-          ...reconciled,
+        // Keep the local player position fully client-owned.
+        // The server only updates authority-only state here.
+        const localPlayer = state.predictedPlayer || state.players?.[myId] || serverPlayer
+        const syncedPlayer = {
+          ...localPlayer,
           id: myId,
           hp: serverPlayer.hp,
           armor: serverPlayer.armor,
@@ -130,6 +127,16 @@ class GameClient {
           lastProcessedSeq: serverPlayer.lastProcessedSeq,
           color: serverPlayer.color,
           username: serverPlayer.username
+        }
+
+        if (!syncedPlayer.dead) {
+          for (const inp of this.pendingInputs) {
+            this.clientPhysics?.update(syncedPlayer, inp, inp.dt ?? (TICK_MS / 1000))
+          }
+        }
+
+        useStore.getState().setPredictedPlayer({
+          ...syncedPlayer
         })
         if (serverPlayer.cheats) {
           const existing = useStore.getState().predictedPlayer || {}
@@ -138,6 +145,11 @@ class GameClient {
       }
 
       this.lastAuthoritativeWorld = nextWorld
+      
+      // Extrapolate other players' positions for smooth rendering
+      // This reduces the appearance of lag for remote players
+      nextWorld.playersExtrapolated = this._extrapolatePlayers(nextWorld.players, TICK_MS / 1000)
+      
       useStore.getState().setWorld({ ...nextWorld, myId })
     })
 
@@ -212,6 +224,41 @@ class GameClient {
     for (const peerId of this.roomPlayers) {
       this.webrtc.connectToPeer(peerId, true)
     }
+  }
+
+  /**
+   * Extrapolate player positions based on previous velocity
+   * Makes remote players appear to move smoothly instead of snapping
+   */
+  _extrapolatePlayers(players, dt) {
+    const extrapolated = { ...players }
+    
+    for (const [id, player] of Object.entries(extrapolated)) {
+      if (!player || id === this.socket?.id || player.dead) continue
+      
+      const prev = this.playerPreviousPositions[id]
+      if (prev) {
+        // Calculate velocity from previous frame
+        const vx = (player.x - prev.x) / (dt || 0.016) // Fallback to 60fps
+        const vy = (player.y - prev.y) / (dt || 0.016)
+        
+        // Extrapolate forward based on velocity
+        // This makes remote players appear to move smoothly between updates
+        extrapolated[id] = {
+          ...player,
+          x: player.x + vx * (dt || 0.016),
+          y: player.y + vy * (dt || 0.016)
+        }
+      }
+      
+      // Store current position for next extrapolation
+      this.playerPreviousPositions[id] = {
+        x: player.x,
+        y: player.y
+      }
+    }
+    
+    return extrapolated
   }
 
   disconnect() {
