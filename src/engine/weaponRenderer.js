@@ -1,4 +1,4 @@
-// ─── Projectile / Grenade / Gas cloud rendering ────────────────────────────────.
+// ─── Projectile / Grenade / Gas cloud rendering ────────────────────────────────.s
 
 export function drawProjectiles(ctx, projectiles) {
   for (const pr of (projectiles || [])) {
