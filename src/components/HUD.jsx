@@ -6,6 +6,7 @@ export default function HUD() {
   const players = useStore(s => s.players)
   const weapons = useStore(s => s.weapons)
   const me      = players[myId]
+  const isMobile = useStore(s => s.isMobileMode)
 
   if (!me || me.dead) return null
 
@@ -14,7 +15,7 @@ export default function HUD() {
   return (
     <div className="hud-container">
       {/* Bottom left: weapon + ammo */}
-      <div className="hud-weapon">
+      <div className={`hud-weapon ${isMobile ? 'mobile-top-left' : ''}`}>
         <div className="hud-weapon-name" style={{ color: wpn?.color || '#fff' }}>
           {wpn?.name || me.weapon}
         </div>
@@ -26,7 +27,7 @@ export default function HUD() {
         </div>
       </div>
 
-      {/* Bottom center: HP */}
+      {/* Center: HP */}
       <div className="hud-health">
         <div className="hud-hp-bar">
           <div
@@ -46,8 +47,8 @@ export default function HUD() {
         )}
       </div>
 
-      {/* Bottom right: items */}
-      <div className="hud-items">
+      {/* Items (moved to top-right on mobile) */}
+      <div className={`hud-items ${isMobile ? 'mobile-top-right' : ''}`}>
         <div className="hud-item">
           <span className="hud-item-icon">💣</span>
           <span>{me.grenades}</span>

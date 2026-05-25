@@ -19,6 +19,7 @@ export class GameRenderer {
     this.particles = new ParticleSystem()
     this.killFeed  = new KillFeed()
     this.grenadeAudioState = new Map()
+    this.jetpackAudioState = new Map()
     this.lastTime  = performance.now()
     this.raf       = null
   }
@@ -100,6 +101,11 @@ export class GameRenderer {
           break
         case 'jetpack': {
           this.particles.jetpackFlame(ev.x, ev.y + 18)
+          const lastJetpack = this.jetpackAudioState.get(ev.playerId) || 0
+          if (now - lastJetpack > 120) {
+            audioManager.jetpack()
+            this.jetpackAudioState.set(ev.playerId, now)
+          }
           break
         }
         case 'wall_hit':
@@ -128,6 +134,10 @@ export class GameRenderer {
     }
     for (const id of this.grenadeAudioState.keys()) {
       if (!activeGrenades.has(id)) this.grenadeAudioState.delete(id)
+    }
+
+    for (const [playerId, lastPlayed] of this.jetpackAudioState.entries()) {
+      if (now - lastPlayed > 250) this.jetpackAudioState.delete(playerId)
     }
 
     // Bullet trails
@@ -207,8 +217,8 @@ export class GameRenderer {
       drawScoreboard(ctx, scores, players, vWidth)
     }
 
-    // Minimap
-    drawMinimap(ctx, vWidth, vHeight, mapData, players, myId, pickups)
+    // Minimap (pass mobile flag so it can be drawn top-right for mobile)
+    drawMinimap(ctx, vWidth, vHeight, mapData, players, myId, pickups, state.isMobileMode)
 
     // Respawn overlay
     if (me && me.dead) {

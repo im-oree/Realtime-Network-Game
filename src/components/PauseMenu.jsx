@@ -15,6 +15,16 @@ export default function PauseMenu() {
     useStore.getState().setScreen('settings')
   }
 
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen()
+      }
+    } catch (_) {}
+  }
+
   return (
     <div className="pause-overlay">
       <div className="pause-panel">
@@ -24,6 +34,9 @@ export default function PauseMenu() {
         </button>
         <button className="menu-btn secondary" onClick={goSettings}>
           ⚙ Settings
+        </button>
+        <button className="menu-btn secondary" onClick={toggleFullscreen}>
+          ⤢ Toggle Fullscreen
         </button>
         <button className="menu-btn danger" onClick={quit}>
           ✕ Quit to Menu

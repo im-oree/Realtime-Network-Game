@@ -1,10 +1,11 @@
 // ─── Minimap ────────────────────────────────────────────────────────────────────
 
-export function drawMinimap(ctx, canvasW, canvasH, mapData, players, myId, pickups) {
+export function drawMinimap(ctx, canvasW, canvasH, mapData, players, myId, pickups, isMobile=false) {
   if (!mapData) return
   const mmW = 160, mmH = 90, pad = 10
   const mx = canvasW - mmW - pad
-  const my = canvasH - mmH - pad
+  // On mobile place minimap at top-right to avoid bottom HUD / controls
+  const my = isMobile ? pad : (canvasH - mmH - pad)
   const scaleX = mmW / mapData.width
   const scaleY = mmH / mapData.height
 

@@ -4,6 +4,7 @@ import {
   loadControls, saveControls, loadSettings, saveSettings, DEFAULT_CONTROLS
 } from '../config'
 import inputManager from '../game/inputManager'
+import audioManager from '../game/audioManager'
 
 export default function Settings() {
   const [controls, setControls] = useState(() => loadControls())
@@ -50,6 +51,7 @@ export default function Settings() {
     const next = { ...settings, [key]: value }
     setSettings(next)
     saveSettings(next)
+    audioManager.setVolumes(next.musicVolume, next.sfxVolume)
   }
 
   const ACTIONS = [

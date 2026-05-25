@@ -26,6 +26,14 @@ export const useStore = create((set, get) => ({
   // UI
   paused:       false,
   showScoreboard: false,
+  // Mobile / device mode (persisted)
+  // read previous preference from localStorage when available
+  isMobileMode: (() => {
+    try { const v = localStorage.getItem('gridwars_mobileMode'); return v === 'true' } catch (_) { return false }
+  })(),
+  showDevicePrompt: (() => {
+    try { return localStorage.getItem('gridwars_mobileMode') == null } catch (_) { return true }
+  })(),
 
   // Actions
   setScreen:     (s) => set({ screen: s }),
@@ -34,6 +42,8 @@ export const useStore = create((set, get) => ({
   setRoomId:     (id) => set({ roomId: id }),
   setPaused:     (v) => set({ paused: v }),
   setShowScoreboard: (v) => set({ showScoreboard: v }),
+  setMobileMode: (v) => set({ isMobileMode: v }),
+  setShowDevicePrompt: (v) => set({ showDevicePrompt: v }),
 
   setMapData: (data) => set({ mapData: data }),
   setWeapons: (w)    => set({ weapons: w }),

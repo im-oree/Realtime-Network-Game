@@ -399,6 +399,27 @@ Weapon pickups can replace the player’s current weapon when collected.
 
 I persist player preferences in `localStorage` so the app remembers them across sessions.
 
+## Mobile Controls & Touch Mode
+
+This project includes a dedicated mobile mode that presents dual on-screen joysticks and a touch-friendly HUD layout.
+
+- Device selection: when the app first loads you are prompted to choose Desktop or Mobile (or let the app detect automatically). Your choice is persisted in `localStorage`.
+- Left joystick: controls movement using an analog virtual axis. Drag the left joystick to move in any direction; horizontal values map to left/right movement and strong upward pushes trigger jump.
+- Right joystick: controls aim and firing. Drag on the right joystick to aim — the client maps the touch position to the canvas world for accurate aiming. Dragging outward beyond a small threshold will auto-fire while the drag is held.
+- Action buttons: reload, grenade, and gas buttons are provided near the right joystick for quick access.
+- HUD layout: to avoid overlapping the touch controls, weapon/ammo and item HUD elements are moved to the top corners when mobile mode is active.
+
+Implementation notes:
+- `src/components/MobileControls.jsx` implements two draggable joystick areas with touch and mouse fallbacks. It updates `src/game/inputManager.js` with a virtual analog axis (`setVirtualAxis`) and virtual actions (`pressAction` / `releaseAction`).
+- `src/components/GameCanvas.jsx` reads the virtual axis from `inputManager.getVirtualAxis()` and maps it to horizontal movement and jump logic when `isMobileMode` is enabled.
+- The app attempts to enter fullscreen automatically when a mobile-mode match starts; there is also a `Toggle Fullscreen` button in the pause menu.
+
+Testing tips:
+- Use your browser devtools device emulator (e.g., Samsung Galaxy S20 Ultra size) or an actual mobile device to verify touch behavior.
+- Tune joystick sensitivity by editing the thresholds in `src/components/MobileControls.jsx` and the movement mapping in `src/components/GameCanvas.jsx`.
+
+If you want, I can add a visual joystick knob that follows the touch position, a configurable sensitivity slider in Settings, or record a short GIF showing the controls in action for documentation.
+
 Stored values include:
 
 - Username

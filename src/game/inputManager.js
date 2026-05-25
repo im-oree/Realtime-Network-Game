@@ -9,6 +9,10 @@ class InputManager {
     this.pointerLocked = false
     this.controls    = loadControls()
     this._listeners  = []
+    this._virtual    = {} // virtual/touch actions
+    this._virtualAxis = { x: 0, y: 0 }
+    this._virtualAimAngle = null // direct aim angle for mobile joystick
+    this.requestPointerLockEnabled = true
   }
 
   init(canvas) {
@@ -55,7 +59,7 @@ class InputManager {
       this.mouseY = e.clientY - r.top
     }
     const mouseDown = e => {
-      if (e.target === this.canvas) requestPointerLock()
+      if (e.target === this.canvas && this.requestPointerLockEnabled) requestPointerLock()
       this.mouseDown[`Mouse${e.button}`] = true
     }
     const mouseUp   = e => { this.mouseDown[`Mouse${e.button}`] = false }
@@ -95,13 +99,53 @@ class InputManager {
     this.controls = { ...this.controls, ...newControls }
   }
 
+  disablePointerLock() {
+    this.requestPointerLockEnabled = false
+    // Exit pointer lock if already active
+    if (document.pointerLockElement && typeof document.exitPointerLock === 'function') {
+      try { document.exitPointerLock() } catch (_) {}
+    }
+  }
+
+  // Methods for virtual/touch controls
+  pressAction(action) {
+    this._virtual[action] = true
+  }
+
+  releaseAction(action) {
+    this._virtual[action] = false
+  }
+
+  setPointerPosition(x, y) {
+    this.mouseX = x
+    this.mouseY = y
+  }
+
+  // Virtual analog axis for movement (-1..1)
+  setVirtualAxis(x, y) {
+    this._virtualAxis.x = Math.max(-1, Math.min(1, x))
+    this._virtualAxis.y = Math.max(-1, Math.min(1, y))
+  }
+
+  getVirtualAxis() {
+    return { x: this._virtualAxis.x, y: this._virtualAxis.y }
+  }
+
+  setVirtualAimAngle(angle) {
+    this._virtualAimAngle = angle
+  }
+
+  getVirtualAimAngle() {
+    return this._virtualAimAngle
+  }
+
   isPressed(action) {
     const key = this.controls[action]
     if (!key) return false
-    // Check mouse buttons
-    if (key.startsWith('Mouse')) return !!this.mouseDown[key]
+    // Check mouse buttons (also check virtual action)
+    if (key.startsWith('Mouse')) return !!(this.mouseDown[key] || this._virtual[action])
     // Check key
-    return !!(this.keys[key] || this.keys[key.toLowerCase()])
+    return !!(this.keys[key] || this.keys[key.toLowerCase()] || this._virtual[action])
   }
 
   isKeyDown(k) {
