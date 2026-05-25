@@ -1,5 +1,6 @@
 // ─── Character (Player) Rendering ──────────────────────────────────────────────
 // A polished, layered 2D character with torso, head, limbs, gear, and VFX.
+// Try to force redeploy
 
 const BODY_W = 20
 const BODY_H = 26
