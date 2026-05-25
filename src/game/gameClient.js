@@ -131,6 +131,11 @@ class GameClient {
           color: serverPlayer.color,
           username: serverPlayer.username
         })
+        // Merge cheats flags if present
+        const existing = useStore.getState().predictedPlayer || {}
+        if (serverPlayer.cheats) {
+          useStore.getState().setPredictedPlayer(p => ({ ...p, cheats: { ...(existing.cheats || {}), ...serverPlayer.cheats } }))
+        }
       }
 
       this.lastAuthoritativeWorld = nextWorld
