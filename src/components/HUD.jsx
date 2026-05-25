@@ -68,13 +68,7 @@ export default function HUD() {
         </div>
       </div>
 
-      {/* Crosshair */}
-      <div className="crosshair" style={{ '--aim-angle': `${me.angle || 0}rad` }}>
-        <div className="crosshair-ring" />
-        <div className="crosshair-center" />
-        <div className="crosshair-ray" />
-        <div className="crosshair-tip" />
-      </div>
+      {/* Trajectory line is now drawn on game canvas instead of crosshair overlay */}
 
       {/* Kill count */}
       <div className="hud-kills">

@@ -202,6 +202,11 @@ export class GameRenderer {
     // Particles
     this.particles.draw(ctx)
 
+    // Draw trajectory line from player to aim target
+    if (me && !me.dead) {
+      this.drawTrajectoryLine(ctx, me, weapons)
+    }
+
     // Restore camera
     this.camera.restore(ctx)
 
@@ -229,5 +234,38 @@ export class GameRenderer {
     if (paused) {
       // Handled by React component
     }
+  }
+
+  drawTrajectoryLine(ctx, player, weapons) {
+    const wpn = weapons?.[player.weapon]
+    const lineLength = 300 // pixels to extend the line
+    
+    // Start from gun position (slightly offset from player center)
+    const gunDist = 12
+    const startX = player.x + Math.cos(player.angle) * gunDist
+    const startY = player.y + Math.sin(player.angle) * gunDist
+    
+    // End point along aim direction
+    const endX = startX + Math.cos(player.angle) * lineLength
+    const endY = startY + Math.sin(player.angle) * lineLength
+    
+    // Draw line
+    ctx.save()
+    ctx.strokeStyle = 'rgba(255, 200, 0, 0.6)'
+    ctx.lineWidth = 2.5
+    ctx.lineCap = 'round'
+    ctx.setLineDash([8, 4]) // dashed line
+    ctx.beginPath()
+    ctx.moveTo(startX, startY)
+    ctx.lineTo(endX, endY)
+    ctx.stroke()
+    
+    // Draw target dot at end
+    ctx.fillStyle = 'rgba(255, 200, 0, 0.8)'
+    ctx.beginPath()
+    ctx.arc(endX, endY, 3, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.restore()
   }
 }
