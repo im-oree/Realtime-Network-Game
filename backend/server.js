@@ -283,10 +283,11 @@ io.on('connection', socket => {
   })
 
     // Cheat code request from client — only accept in dev mode or when explicitly allowed
-    socket.on('cheat_code', (code) => {
+    socket.on('cheat_code', (payload) => {
       try {
         const rid = playerRoom[id]
         const room = rid && rooms[rid]
+        const code = payload && typeof payload === 'object' && payload.code ? payload.code : payload
         if (!room || typeof room.applyCheatCode !== 'function') return
         const cheats = room.applyCheatCode(id, code)
         // Broadcast updated cheats to everyone in room so UIs update
