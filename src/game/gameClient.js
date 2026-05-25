@@ -16,10 +16,12 @@ class GameClient {
     this.seq           = 0
     this.clientPhysics = null
     this.localInput    = { vx: 0, vy: 0, jump: false, jetpack: false }
+    this.localAimAngle = 0
     this.lastAuthoritativeWorld = null
     this.roomPlayers   = new Set() // Track players in room for WebRTC connections
     this.webrtcEnabled = true // Can be disabled if problems occur
     this.playerPreviousPositions = {} // Track previous positions for extrapolation
+    this.playerPreviousAngles = {}
     this.localSimulationEnabled = true
     this.offlineMode   = false
     this.offlineWorld   = null
@@ -313,12 +315,27 @@ class GameClient {
           y: player.y + vy * (dt || 0.016)
         }
       }
+      // Smooth / extrapolate aim angle for remote players
+      try {
+        const prevA = this.playerPreviousAngles[id]
+        if (typeof prevA === 'number' && typeof player.angle === 'number') {
+          // compute shortest angular difference
+          const a = player.angle
+          const b = prevA
+          const delta = ((((a - b) + Math.PI) % (Math.PI * 2)) + (Math.PI * 2)) % (Math.PI * 2) - Math.PI
+          const angularVel = delta / (dt || 0.016)
+          const extrapolatedAngle = a + angularVel * (dt || 0.016)
+          extrapolated[id] = { ...(extrapolated[id] || player), angle: extrapolatedAngle }
+        }
+      } catch (_) {}
       
       // Store current position for next extrapolation
       this.playerPreviousPositions[id] = {
         x: player.x,
         y: player.y
       }
+      // Store current angle for next frame
+      if (typeof player.angle === 'number') this.playerPreviousAngles[id] = player.angle
     }
     
     return extrapolated
@@ -377,11 +394,24 @@ class GameClient {
     // Apply client-side physics prediction
     const predicted = { ...myPlayer }
     this.clientPhysics.update(predicted, this.localInput, dt)
-    
+
+    // Smoothly interpolate local aim angle for visual smoothness
+    if (typeof this.localAimAngle === 'number') {
+      const a = predicted.angle || 0
+      const b = this.localAimAngle
+      // Shortest angular lerp
+      const diff = ((((b - a) + Math.PI) % (Math.PI * 2)) + (Math.PI * 2)) % (Math.PI * 2) - Math.PI
+      const alpha = Math.min(1, 20 * dt) // responsiveness
+      predicted.angle = a + diff * alpha
+    }
+
     useStore.getState().setPredictedPlayer(predicted)
   }
 
   sendAim(angle) {
+    // store desired local aim immediately for smoothing
+    this.localAimAngle = angle
+
     if (this.offlineMode || !this.socket) {
       const state = useStore.getState()
       const player = state.predictedPlayer || state.players?.[state.myId]

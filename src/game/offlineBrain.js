@@ -49,11 +49,12 @@ function makeBrain(index) {
   return {
     strafeDir: index % 2 === 0 ? 1 : -1,
     strafeTimer: 0.8 + index * 0.2,
-    fireCooldown: 0.3 + index * 0.1,
-    grenadeCooldown: 4.5 + index * 0.8,
+    fireCooldown: 0.8 + index * 0.2,     // Added initial hesitation on spawn
+    grenadeCooldown: 8.0 + index * 1.5,  // Substantially longer base grenade cooldown
     jetpackBias: 0,
     roamTimer: 1.2 + index * 0.15,
-    panicTimer: 0
+    panicTimer: 0,
+    aimOffset: 0                         // Simulates a trailing human aim wobble
   }
 }
 
@@ -88,7 +89,10 @@ export function thinkOfflineBot(bot, world, dt) {
   const brain = bot.brain || makeBrain(0)
   bot.brain = brain
 
-  const players = Object.values(world.players || {}).filter(player => player && player.id !== bot.id && !player.dead && !player.isBot)
+  const players = Object.values(world.players || {}).filter(
+    player => player && player.id !== bot.id && !player.dead && !player.isBot
+  )
+  
   if (!players.length) {
     brain.roamTimer = Math.max(0, brain.roamTimer - dt)
     if (brain.roamTimer <= 0) {
@@ -125,7 +129,12 @@ export function thinkOfflineBot(bot, world, dt) {
     x: target.x + leadX,
     y: target.y + leadY
   }
-  const angle = Math.atan2(aimTarget.y - bot.y, aimTarget.x - bot.x)
+  
+  // Natural aim drift so they don't perfectly laser-track the coordinates
+  brain.aimOffset = (brain.aimOffset * 0.85) + ((Math.random() - 0.5) * 0.12)
+  const perfectAngle = Math.atan2(aimTarget.y - bot.y, aimTarget.x - bot.x)
+  const angle = perfectAngle + brain.aimOffset
+  
   const aimError = Math.abs(normalizeAngle(angle - (bot.angle || 0)))
   const sight = hasLineOfSight(bot, target, world.map || OFFLINE_MAP)
 
@@ -150,19 +159,30 @@ export function thinkOfflineBot(bot, world, dt) {
 
   const jump = bot.onGround && dy < -55 && distance < 420 && Math.random() < 0.18
   const jetpack = !bot.onGround && dy < -80 && distance < 650 && bot.jetpackFuel > 18 && Math.random() < 0.5
-  const shoot = sight && distance < preferredRange + 220 && aimError < 0.28 && brain.fireCooldown <= 0
-  const grenade = !sight && distance > 360 && distance < 980 && brain.grenadeCooldown <= 0 && (bot.grenades || 0) > 0 && Math.random() < 0.35
-  const gas = !sight && distance > 520 && distance < 1000 && (bot.gasCanisters || 0) > 0 && Math.random() < 0.08
+  
+  // Shooting threshold adjusted slightly to account for the aim wobble mechanics
+  const shoot = sight && distance < preferredRange + 220 && aimError < 0.35 && brain.fireCooldown <= 0
+  
+  // Drastically reduced the update-tick probabilities to curb constant utility spam
+  const grenade = !sight && distance > 360 && distance < 980 && brain.grenadeCooldown <= 0 && (bot.grenades || 0) > 0 && Math.random() < 0.005
+  const gas = !sight && distance > 520 && distance < 1000 && (bot.gasCanisters || 0) > 0 && Math.random() < 0.002
 
   if (shoot) {
     const weapon = OFFLINE_WEAPONS[bot.weapon] || OFFLINE_WEAPONS.pistol
-    brain.fireCooldown = (weapon.fireRate / 1000) * (bot.rapidFire ? 0.5 : 1) + 0.06
+    
+    // 15% chance to simulate user clicking hesitation or manual burst firing patterns
+    if (Math.random() < 0.15) {
+      brain.fireCooldown = 0.3 + Math.random() * 0.4
+    } else {
+      brain.fireCooldown = (weapon.fireRate / 1000) * (bot.rapidFire ? 0.5 : 1) + 0.06
+    }
   }
+  
   if (grenade) {
-    brain.grenadeCooldown = 3.0 + Math.random() * 1.4
+    brain.grenadeCooldown = 8.0 + Math.random() * 4.0 
   }
   if (gas) {
-    brain.grenadeCooldown = Math.max(brain.grenadeCooldown, 2.0)
+    brain.grenadeCooldown = Math.max(brain.grenadeCooldown, 6.0)
   }
 
   return {

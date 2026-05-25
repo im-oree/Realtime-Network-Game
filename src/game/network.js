@@ -4,23 +4,9 @@
 //   • Snapshot interpolation buffer for smooth remote players
 //   • RTT / clock-offset measurement for timeline sync
 //   • Client-side prediction reconciliation (input replay on server correction)
-//
-// KEY FIXES vs original:
-//   1. Interpolation buffer: we store the last N snapshots and render players
-//      at (now - interpolationDelay), smoothly lerping between two bracketing
-//      snapshots.  No more snap-to-server-position on every tick.
-//   2. Proper reconciliation: when the server corrects our position we replay
-//      all pending (unacknowledged) inputs on top of the corrected state.
-//   3. RTT measurement: periodic ping so we know true one-way latency and can
-//      tune the interpolation delay automatically.
-//   4. The extrapolation function is fixed — old one divided position-delta by
-//      dt then re-multiplied by dt (a no-op that also caused overshooting).
-//
-// Usage: import gameClient from './gameClient'
-//        gameClient.connect()   ← still the same public API
 
-import { io }        from 'socket.io-client'
-import { useStore }  from '../store'
+import { io }      from 'socket.io-client'
+import { useStore } from '../store'
 
 const DEFAULT_API_BASE_URL = 'http://localhost:3000'
 
@@ -39,25 +25,22 @@ export function apiUrl(path = '') {
 }
 
 // ─── Interpolation constants ──────────────────────────────────────────────────
-// How far behind "real time" we render remote players (ms).
-// Lower = less latency but more visible gaps if a packet drops.
-// 100ms is the classic sweet spot; we auto-tune it toward 1.5× measured RTT.
 const INTERP_DELAY_MS_DEFAULT = 100
-const INTERP_BUFFER_SIZE      = 16   // how many snapshots to keep
-const MAX_EXTRAPOLATE_MS      = 200  // never extrapolate beyond this
+const INTERP_BUFFER_SIZE      = 16   
+const MAX_EXTRAPOLATE_MS      = 200  
 const RECONCILE_THRESHOLD_SQ  = 100  // px² drift to trigger reconciliation (10px)
-const SNAP_THRESHOLD_SQ       = 160000  // px² (400px) — instant snap for teleports
+const SNAP_THRESHOLD_SQ       = 160000 // px² (400px) — instant snap for teleports
 
 // ─── RTT tracking ─────────────────────────────────────────────────────────────
 const RTT_SAMPLES   = 8
-const RTT_INTERVAL  = 2000  // measure every 2s
+const RTT_INTERVAL  = 2000  
 
 export class NetworkManager {
   constructor() {
     this.socket = null
 
     // Interpolation
-    this._snapshotBuffer  = []     // [{ serverTime, players, ... }, ...]  sorted by serverTime
+    this._snapshotBuffer  = []     // [{ serverTime, players, ... }, ...] sorted chronologically
     this._interpDelay     = INTERP_DELAY_MS_DEFAULT
     this._clockOffset     = 0      // localTime + clockOffset ≈ serverTime
 
@@ -71,23 +54,29 @@ export class NetworkManager {
     this._seq           = 0
 
     // Callbacks set by GameClient
-    this.onWorldUpdate  = null   // (interpolatedWorld) => void
-    this.onRoomJoined   = null   // (data) => void
-    this.onPlayerJoined = null   // ({ id, username }) => void
-    this.onPlayerLeft   = null   // ({ id }) => void
-    this.onRedirectJoin = null   // ({ roomId }) => void
-    this.onCheatsUpdated= null   // ({ id, cheats }) => void
-    this.onError        = null   // (msg) => void
-    this.getPhysicsReplay = null // () => fn(player, input, dt)
+    this.onWorldUpdate   = null 
+    this.onRoomJoined    = null 
+    this.onPlayerJoined  = null 
+    this.onPlayerLeft    = null 
+    this.onRedirectJoin  = null 
+    this.onCheatsUpdated = null 
+    this.onError         = null 
+    this.getPhysicsReplay = null
+
+    // WebRTC signaling callbacks
+    this.onWebRTCOffer   = null
+    this.onWebRTCAnswer  = null
+    this.onICECandidate  = null
+    this._roomsCallback  = null
   }
 
   // ── Connect ───────────────────────────────────────────────────────────────
   connect() {
-    if (this.socket?.connected) return
+    // FIX: Guard against active or pending connection handles to prevent memory leaks
+    if (this.socket) return
 
     this.socket = io(getApiBaseUrl(), {
       transports: ['websocket'],
-      // FIX: reconnection with backoff so brief server restarts don't kill clients
       reconnection:      true,
       reconnectionDelay: 500,
       reconnectionDelayMax: 4000
@@ -115,18 +104,16 @@ export class NetworkManager {
       const rtt    = now - clientTime
       const oneWay = rtt / 2
 
-      // Clock offset: how much to add to local performance.now() to get server time
-      // serverTime (ms epoch) - (now - oneWay) (local epoch approx)
-      const localEpochAtSend = Date.now() - rtt
-      this._clockOffset = serverTime - localEpochAtSend
+      // FIX: Server stamps the time at the mid-point of transit (oneWay duration)
+      const localEpochAtServerProcess = Date.now() - oneWay
+      this._clockOffset = serverTime - localEpochAtServerProcess
 
       this._rttSamples.push(rtt)
       if (this._rttSamples.length > RTT_SAMPLES) this._rttSamples.shift()
 
-      // Update interpolation delay: target 1.5× one-way latency, min 50ms, max 200ms
-      const avgRTT    = this._rttSamples.reduce((a, b) => a + b, 0) / this._rttSamples.length
+      const avgRTT      = this._rttSamples.reduce((a, b) => a + b, 0) / this._rttSamples.length
       const targetDelay = Math.max(50, Math.min(200, avgRTT * 1.5))
-      // Smooth the change so it doesn't cause a jump
+      
       this._interpDelay += (targetDelay - this._interpDelay) * 0.1
     })
 
@@ -136,33 +123,33 @@ export class NetworkManager {
       this._pendingInputs  = []
       this._seq            = 0
       if (data.serverTime) {
-        // Seed clock offset from initial handshake
         this._clockOffset = data.serverTime - Date.now()
       }
       this.onRoomJoined?.(data)
     })
 
     // ── World state ───────────────────────────────────────────────────────────
-    // FIX: instead of immediately applying the snapshot, push it into a buffer.
-    // The render loop calls getInterpolatedWorld() which picks the right pair.
     this.socket.on('world_state', snapshot => {
-      const ts = snapshot.serverTime ?? Date.now()
-
-      // Push into sorted buffer
+      // Push into buffer and force timeline-sorted structural integrity
       this._snapshotBuffer.push({ ...snapshot, _localRxTime: Date.now() })
+      
+      // FIX: Sort explicitly to absorb frame anomalies or transport out-of-order jitter
+      this._snapshotBuffer.sort((a, b) => {
+        const tA = a.serverTime ?? a._localRxTime
+        const tB = b.serverTime ?? b._localRxTime
+        return tA - tB
+      })
 
-      // Keep buffer bounded
       if (this._snapshotBuffer.length > INTERP_BUFFER_SIZE) {
         this._snapshotBuffer.shift()
       }
 
-      // FIX: Reconcile OUR player from the authoritative snapshot, then replay inputs
-      const myId = this.socket?.id
+      // FIX: Ensure ID resolves against store allocations if custom mapping exists
+      const myId = useStore.getState().myId || this.socket?.id
       if (myId && snapshot.players?.[myId]) {
         this._reconcileLocalPlayer(snapshot.players[myId], snapshot.lastProcessedSeq)
       }
 
-      // Notify the game loop that new data arrived (for event processing)
       if (this.onWorldUpdate) {
         this.onWorldUpdate(snapshot)
       }
@@ -173,16 +160,12 @@ export class NetworkManager {
     this.socket.on('player_left',   data => this.onPlayerLeft?.(data))
     this.socket.on('redirect_join', data => this.onRedirectJoin?.(data))
     this.socket.on('error_msg',     msg  => this.onError?.(msg))
-
-    this.socket.on('cheats_updated', data => {
-      this.onCheatsUpdated?.(data)
-    })
+    this.socket.on('cheats_updated', data => this.onCheatsUpdated?.(data))
 
     this.socket.on('rooms_list', ({ rooms }) => {
       this._roomsCallback?.(rooms)
     })
 
-    // WebRTC signaling — unchanged, just delegated back to caller
     this.socket.on('webrtc-offer',   d => this.onWebRTCOffer?.(d))
     this.socket.on('webrtc-answer',  d => this.onWebRTCAnswer?.(d))
     this.socket.on('ice-candidate',  d => this.onICECandidate?.(d))
@@ -223,15 +206,11 @@ export class NetworkManager {
   get connected() { return !!this.socket?.connected }
 
   // ── Interpolated world for renderer ──────────────────────────────────────
-  // Call this every render frame. Returns a world object with remote players
-  // smoothly interpolated between the two nearest snapshots.
   getInterpolatedWorld(myId, predictedPlayer) {
     if (this._snapshotBuffer.length === 0) return null
 
-    // The render time is "now" minus the interpolation delay, in server time
     const renderTime = Date.now() + this._clockOffset - this._interpDelay
 
-    // Find the two snapshots that bracket renderTime
     let older = null
     let newer = null
 
@@ -246,20 +225,17 @@ export class NetworkManager {
       }
     }
 
-    // Pick base snapshot
     let base = newer ?? older ?? this._snapshotBuffer[this._snapshotBuffer.length - 1]
-
     let interpPlayers = {}
 
     if (older && newer) {
-      // Normal interpolation between two snapshots
       const t0   = older.serverTime ?? older._localRxTime
       const t1   = newer.serverTime ?? newer._localRxTime
       const span = t1 - t0
       const t    = span > 0 ? Math.max(0, Math.min(1, (renderTime - t0) / span)) : 0
 
       for (const pid of Object.keys(newer.players || {})) {
-        if (pid === myId) continue   // local player handled by prediction
+        if (pid === myId) continue  
         const pOld = older.players?.[pid]
         const pNew = newer.players[pid]
         if (!pOld) {
@@ -273,9 +249,10 @@ export class NetworkManager {
         }
       }
     } else if (older) {
-      // Only have older snapshot — extrapolate forward, but cap it
-      const age = Date.now() - (older._localRxTime ?? 0)
-      const extrapT = Math.min(age / 1000, MAX_EXTRAPOLATE_MS / 1000)
+      // FIX: Extrapolate relative to your rendering timeline, not arbitrary packet RX times
+      const olderTime = older.serverTime ?? older._localRxTime
+      const extrapMs  = Math.max(0, Math.min(renderTime - olderTime, MAX_EXTRAPOLATE_MS))
+      const extrapT   = extrapMs / 1000
 
       for (const [pid, p] of Object.entries(older.players || {})) {
         if (pid === myId) continue
@@ -287,14 +264,12 @@ export class NetworkManager {
         }
       }
     } else {
-      // Only newer — use it directly
       for (const [pid, p] of Object.entries(newer?.players || {})) {
         if (pid === myId) continue
         interpPlayers[pid] = { ...p }
       }
     }
 
-    // Overlay predicted local player on top
     if (myId && predictedPlayer) {
       interpPlayers[myId] = predictedPlayer
     } else if (myId && base.players?.[myId]) {
@@ -309,26 +284,18 @@ export class NetworkManager {
   }
 
   // ── Reconciliation ────────────────────────────────────────────────────────
-  // FIX: This is the heart of good client-side prediction.
-  // When the server sends us OUR player state:
-  //   1. Drop all pending inputs the server has already processed.
-  //   2. If the server position differs meaningfully from our prediction,
-  //      reset our position to the server's and REPLAY all still-pending inputs
-  //      so we land at the correct predicted position — not the old server one.
   _reconcileLocalPlayer(serverPlayer, lastProcessedSeq) {
     const state = useStore.getState()
-    let local   = state.predictedPlayer ?? state.players?.[this.socket.id]
+    const myId  = state.myId || this.socket?.id
+    let local   = state.predictedPlayer ?? state.players?.[myId]
     if (!local) return
 
-    // Drop acknowledged inputs
     if (lastProcessedSeq != null) {
       this._pendingInputs = this._pendingInputs.filter(i => i.seq > lastProcessedSeq)
-    } else {
-      // Server didn't send lastProcessedSeq — keep last 20 inputs as safety window
-      if (this._pendingInputs.length > 20) this._pendingInputs = this._pendingInputs.slice(-20)
+    } else if (this._pendingInputs.length > 20) {
+      this._pendingInputs = this._pendingInputs.slice(-20)
     }
 
-    // Always sync non-positional authoritative state (hp, ammo, etc.)
     const synced = {
       ...local,
       hp:           serverPlayer.hp,
@@ -352,32 +319,30 @@ export class NetworkManager {
       synced.cheats = { ...(local.cheats || {}), ...serverPlayer.cheats }
     }
 
-    // Check positional drift
     if (!serverPlayer.dead) {
-      const dx    = local.x - serverPlayer.x
-      const dy    = local.y - serverPlayer.y
+      const dx     = local.x - serverPlayer.x
+      const dy     = local.y - serverPlayer.y
       const distSq = dx * dx + dy * dy
 
       if (distSq > SNAP_THRESHOLD_SQ) {
-        // Huge drift (teleport/respawn) — snap immediately
         synced.x  = serverPlayer.x
         synced.y  = serverPlayer.y
         synced.vx = serverPlayer.vx || 0
         synced.vy = serverPlayer.vy || 0
       } else if (distSq > RECONCILE_THRESHOLD_SQ) {
-        // Meaningful drift — reset to server position and replay pending inputs
         synced.x  = serverPlayer.x
         synced.y  = serverPlayer.y
         synced.vx = serverPlayer.vx || 0
         synced.vy = serverPlayer.vy || 0
 
-        // Replay pending inputs using the physics engine
         const replayFn = this.getPhysicsReplay?.()
         if (replayFn && this._pendingInputs.length > 0) {
           let replayed = { ...synced }
           const fixedDt = 1 / 60
+          
           for (const inp of this._pendingInputs) {
-            replayFn(replayed, inp, fixedDt)
+            // Fall back to original frame dt if sent with input metadata
+            replayFn(replayed, inp, inp.dt || fixedDt)
           }
           synced.x  = replayed.x
           synced.y  = replayed.y
@@ -385,9 +350,7 @@ export class NetworkManager {
           synced.vy = replayed.vy
         }
       }
-      // If distSq <= RECONCILE_THRESHOLD_SQ: prediction was close enough, keep local
     } else {
-      // Dead — trust server fully
       synced.x = serverPlayer.x
       synced.y = serverPlayer.y
     }
@@ -403,12 +366,15 @@ export class NetworkManager {
         this.socket.emit('ping_req', performance.now())
       }
     }, RTT_INTERVAL)
-    // Immediate first ping
+    
     if (this.socket?.connected) this.socket.emit('ping_req', performance.now())
   }
 
   _stopRTTMeasurement() {
-    if (this._rttTimer) { clearInterval(this._rttTimer); this._rttTimer = null }
+    if (this._rttTimer) { 
+      clearInterval(this._rttTimer)
+      this._rttTimer = null 
+    }
   }
 
   get rtt() {
@@ -419,6 +385,5 @@ export class NetworkManager {
 
 function _lerp(a, b, t) { return a + (b - a) * t }
 
-// Singleton — matches existing import pattern
 export const networkManager = new NetworkManager()
 export default networkManager
