@@ -36,7 +36,25 @@ export default function GameCanvas() {
     // Start renderer
     renderer.start(canvas, () => useStore.getState())
 
-    // Input tick
+    // Game loop for client-side physics prediction
+    let lastFrameTime = Date.now()
+    let gameLoopRaf = null
+    const gameLoop = () => {
+      const now = Date.now()
+      const dt = (now - lastFrameTime) / 1000
+      lastFrameTime = now
+      
+      const state = useStore.getState()
+      if (!state.paused && state.screen === 'playing') {
+        // Update client-side physics for smooth local movement
+        client.updateClientPhysics(Math.min(dt, 0.05)) // Cap dt to prevent large jumps
+      }
+      
+      gameLoopRaf = requestAnimationFrame(gameLoop)
+    }
+    gameLoopRaf = requestAnimationFrame(gameLoop)
+
+    // Input tick - sends input to server at fixed rate
     const inputTick = setInterval(() => {
       const state = useStore.getState()
       const me = state.players[state.myId]
@@ -124,6 +142,7 @@ export default function GameCanvas() {
     }, TICK_MS)
 
     return () => {
+      if (gameLoopRaf) cancelAnimationFrame(gameLoopRaf)
       clearInterval(inputTick)
       renderer.stop()
       inputManager.destroy()

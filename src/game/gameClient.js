@@ -2,12 +2,16 @@ import { io }          from 'socket.io-client'
 import { useStore }    from '../store'
 import { PLAYER_SPEED, TICK_MS } from '../config'
 import { getApiBaseUrl } from './network'
+import ClientPhysics from './clientPhysics'
 
 class GameClient {
   constructor() {
     this.socket        = null
     this.pendingInputs = []
     this.seq           = 0
+    this.clientPhysics = null
+    this.localInput    = { vx: 0, vy: 0, jump: false, jetpack: false }
+    this.networkPlayers = {} // Store for interpolation of remote players
   }
 
   connect() {
@@ -37,27 +41,69 @@ class GameClient {
           ...data.snapshot,
           myId: this.socket.id
         })
+        // Initialize client physics for this map
+        if (data.map && !this.clientPhysics) {
+          this.clientPhysics = new ClientPhysics(
+            data.map.w,
+            data.map.platforms,
+            data.map.walls
+          )
+        }
       }
       useStore.getState().setScreen('playing')
     })
 
     this.socket.on('world_state', world => {
       const myId = this.socket?.id
-      if (myId && world.players?.[myId]) {
-        const lastAck = world.players[myId].lastProcessedSeq || 0
-        while (this.pendingInputs.length && this.pendingInputs[0].seq <= lastAck) {
-          this.pendingInputs.shift()
+      const state = useStore.getState()
+      
+      // For our own player: use client-side prediction, only apply server corrections periodically
+      if (myId && world.players?.[myId] && state.players?.[myId]) {
+        const serverPlayer = world.players[myId]
+        const localPlayer = state.players[myId]
+        
+        // Check for misprediction - if server's position differs significantly from ours,
+        // apply a gentle correction (lerp) to avoid jarring jumps
+        const dx = serverPlayer.x - localPlayer.x
+        const dy = serverPlayer.y - localPlayer.y
+        const distSq = dx * dx + dy * dy
+        
+        // If we've drifted too far, correct gradually (reconciliation)
+        if (distSq > 400) { // 20px threshold
+          serverPlayer.x = localPlayer.x + dx * 0.1 // Gentle correction
+          serverPlayer.y = localPlayer.y + dy * 0.1
+        } else {
+          serverPlayer.x = localPlayer.x
+          serverPlayer.y = localPlayer.y
         }
-        let x = world.players[myId].x
-        let y = world.players[myId].y
-        for (const inp of this.pendingInputs) {
-          if (inp.type !== 'move') continue
-          const dt = inp.dt ?? (TICK_MS / 1000)
-          x += (inp.vx || 0) * dt
-        }
-        world.players[myId].x = x
-        world.players[myId].y = y
+        
+        // Apply other server-authoritative data
+        serverPlayer.vy = localPlayer.vy
+        serverPlayer.hp = serverPlayer.hp // Keep server's hp
+        serverPlayer.dead = serverPlayer.dead // Keep server's dead state
       }
+      
+      // For remote players: interpolate their movement smoothly
+      if (world.players) {
+        for (const [id, player] of Object.entries(world.players)) {
+          if (id === myId) continue
+          
+          const prev = this.networkPlayers[id]
+          if (prev) {
+            // Smooth interpolation between last known position and new position
+            player._prevX = prev.x
+            player._prevY = prev.y
+            player._prevTime = prev.time || 0
+          }
+          
+          this.networkPlayers[id] = {
+            x: player.x,
+            y: player.y,
+            time: Date.now()
+          }
+        }
+      }
+      
       useStore.getState().setWorld({ ...world, myId })
     })
 
@@ -90,28 +136,44 @@ class GameClient {
   }
 
   // ── Movement ──────────────────────────────────────────────────────────────
+  setMovementInput(vx, vy, jump, jetpack) {
+    // Store input state - will be used in updateClientPhysics()
+    this.localInput = { vx, vy, jump, jetpack }
+  }
+
   sendMovement(vx, vy, jump, jetpack, dt) {
     if (!this.socket) return
     this.seq++
-    const inp = { seq: this.seq, type: 'move', vx, vy, jump, jetpack, dt }
-    this.pendingInputs.push({ ...inp })
+    
+    // Send input to server
+    const inp = { seq: this.seq, type: 'move', vx, vy, jump, jetpack }
+    this.pendingInputs.push(inp)
     this.socket.emit('input', inp)
+    
+    // Update local input state for client-side prediction
+    this.setMovementInput(vx, vy, jump, jetpack)
+  }
 
-    // Optimistic update (horizontal only, let server handle gravity)
-    useStore.setState(s => {
-      const p = s.players[s.myId]
-      if (!p || p.dead) return {}
-      const mw = s.mapSize?.w || 2400
-      return {
-        players: {
-          ...s.players,
-          [s.myId]: {
-            ...p,
-            x: Math.max(16, Math.min(mw - 16, p.x + vx * dt))
-          }
-        }
+  // ── Client Physics Update ────────────────────────────────────────────────
+  updateClientPhysics(dt) {
+    if (!this.clientPhysics) return
+    
+    const state = useStore.getState()
+    const myId = state.myId
+    const myPlayer = state.players?.[myId]
+    
+    if (!myPlayer || myPlayer.dead) return
+    
+    // Apply client-side physics prediction
+    this.clientPhysics.update(myPlayer, this.localInput, dt)
+    
+    // Update store with new position
+    useStore.setState(s => ({
+      players: {
+        ...s.players,
+        [myId]: { ...myPlayer }
       }
-    })
+    }))
   }
 
   sendAim(angle) {
