@@ -40,6 +40,8 @@ class GameRoom {
     this.maxPlayers = maxPlayers
     this.players = {}
     this.inputQueues = {}
+    // per-room option to allow cheats via env var
+    this.allowCheats = process.env.ALLOW_CHEATS === 'true' || process.env.NODE_ENV !== 'production'
     this.projectiles = {}
     this.grenades = {}
     this.gasClouds = {}
@@ -138,6 +140,13 @@ class GameRoom {
       deaths: 0,
       facing: 1   // 1 = right, -1 = left
     }
+    // Per-player cheats; default off
+    this.players[playerId].cheats = {
+      infiniteHealth: false,
+      infiniteJetpack: false,
+      infiniteBullets: false,
+      infiniteLives: false
+    }
     this.inputQueues[playerId] = []
     this.scores[playerId] = this.scores[playerId] || { kills: 0, deaths: 0 }
   }
@@ -170,7 +179,9 @@ class GameRoom {
     }
 
     player.lastShot = now
-    player.ammo -= 1
+    if (!player.cheats || !player.cheats.infiniteBullets) {
+      player.ammo -= 1
+    }
 
     for (let i = 0; i < wpn.bulletsPerShot; i++) {
       const spreadAngle = angle + (Math.random() - 0.5) * wpn.spread * 2
@@ -355,10 +366,12 @@ class GameRoom {
       player.vy += map.gravity * dt
 
       // Jetpack
-      if (player.jetpackActive && player.jetpackFuel > 0 && !player.onGround) {
+      if (player.jetpackActive && (player.cheats && player.cheats.infiniteJetpack ? true : player.jetpackFuel > 0) && !player.onGround) {
         player.vy += JETPACK_FORCE * dt
-        player.jetpackFuel -= JETPACK_DRAIN * dt
-        if (player.jetpackFuel < 0) player.jetpackFuel = 0
+        if (!(player.cheats && player.cheats.infiniteJetpack)) {
+          player.jetpackFuel -= JETPACK_DRAIN * dt
+          if (player.jetpackFuel < 0) player.jetpackFuel = 0
+        }
         this.events.push({ type: 'jetpack', playerId: player.id, x: player.x, y: player.y })
       }
 
@@ -419,9 +432,11 @@ class GameRoom {
         if (gas.owner === player.id) continue
         const dx = player.x - gas.x, dy = player.y - gas.y
         if (dx * dx + dy * dy < gas.radius * gas.radius) {
-          player.hp -= gas.damage * dt
-          if (player.hp <= 0) {
-            this._killPlayer(player, gas.owner)
+          if (!(player.cheats && player.cheats.infiniteHealth)) {
+            player.hp -= gas.damage * dt
+            if (player.hp <= 0) {
+              this._killPlayer(player, gas.owner)
+            }
           }
         }
       }
@@ -543,6 +558,8 @@ class GameRoom {
   }
 
   _damagePlayer(player, damage, attackerId, proj) {
+    if (player.cheats && player.cheats.infiniteHealth) return
+
     // Armor absorbs 50%
     if (player.armor > 0) {
       const absorbed = Math.min(player.armor, damage * 0.5)
@@ -573,6 +590,12 @@ class GameRoom {
   }
 
   _killPlayer(player, killerId) {
+    if (player.cheats && player.cheats.infiniteLives) {
+      // Prevent death; restore health instead
+      player.hp = player.maxHp
+      return
+    }
+
     player.hp = 0
     player.dead = true
     player.respawnTimer = RESPAWN_TIME
@@ -626,6 +649,56 @@ class GameRoom {
     }
   }
 
+  // Apply a cheat code for a player. Returns the player's cheats object or null if disallowed.
+  applyCheatCode(playerId, code) {
+    const player = this.players[playerId]
+    if (!player) return null
+    if (!this.allowCheats) return null
+    const raw = String(code || '').trim().toUpperCase()
+    const setAll = (v) => {
+      player.cheats.infiniteHealth = v
+      player.cheats.infiniteJetpack = v
+      player.cheats.infiniteBullets = v
+      player.cheats.infiniteLives = v
+    }
+    switch (raw) {
+      case 'GODMODE':
+        player.cheats.infiniteHealth = true
+        player.hp = player.maxHp
+        break
+      case 'INFJETPACK':
+        player.cheats.infiniteJetpack = true
+        player.jetpackFuel = JETPACK_FUEL_MAX
+        break
+      case 'INFBULLETS':
+        player.cheats.infiniteBullets = true
+        break
+      case 'INFLIFE':
+        player.cheats.infiniteLives = true
+        break
+      case 'ALL':
+        setAll(true)
+        player.hp = player.maxHp
+        player.jetpackFuel = JETPACK_FUEL_MAX
+        break
+      case 'RESET':
+        setAll(false)
+        break
+      default:
+        // allow toggles like +GODMODE or -GODMODE
+        if (raw.startsWith('+') || raw.startsWith('-')) {
+          const on = raw[0] === '+'
+          const key = raw.slice(1)
+          if (key === 'GODMODE') player.cheats.infiniteHealth = on
+          if (key === 'INFJETPACK') player.cheats.infiniteJetpack = on
+          if (key === 'INFBULLETS') player.cheats.infiniteBullets = on
+          if (key === 'INFLIFE') player.cheats.infiniteLives = on
+        }
+        break
+    }
+    return player.cheats
+  }
+
   buildSnapshot() {
     const players = {}
     for (const [id, p] of Object.entries(this.players)) {
@@ -655,6 +728,7 @@ class GameRoom {
         facing: p.facing,
         kills: p.kills,
         deaths: p.deaths
+        ,cheats: p.cheats || {}
       }
     }
     return {

@@ -3,15 +3,19 @@ import { useStore }    from '../store'
 import { PLAYER_SPEED, TICK_MS } from '../config'
 import { getApiBaseUrl } from './network'
 import ClientPhysics from './clientPhysics'
+import WebRTCManager from './webrtcManager'
 
 class GameClient {
   constructor() {
     this.socket        = null
+    this.webrtc        = null
     this.pendingInputs = []
     this.seq           = 0
     this.clientPhysics = null
     this.localInput    = { vx: 0, vy: 0, jump: false, jetpack: false }
     this.lastAuthoritativeWorld = null
+    this.roomPlayers   = new Set() // Track players in room for WebRTC connections
+    this.webrtcEnabled = true // Can be disabled if problems occur
   }
 
   connect() {
@@ -22,14 +26,33 @@ class GameClient {
     this.socket.on('connect', () => {
       useStore.getState().setMyId(this.socket.id)
       useStore.getState().setConnected(true)
+      this._initWebRTC()
     })
 
     this.socket.on('disconnect', () => {
       useStore.getState().setConnected(false)
+      this.webrtc?.disconnect()
+      this.webrtc = null
     })
 
     this.socket.on('connected', ({ id }) => {
       useStore.getState().setMyId(id)
+    })
+
+    // ── WebRTC Signaling ──────────────────────────────────────────────────────
+    this.socket.on('webrtc-offer', async ({ from, offer }) => {
+      if (!this.webrtc || !this.webrtcEnabled) return
+      await this.webrtc.handleOffer(from, offer)
+    })
+
+    this.socket.on('webrtc-answer', async ({ from, answer }) => {
+      if (!this.webrtc || !this.webrtcEnabled) return
+      await this.webrtc.handleAnswer(from, answer)
+    })
+
+    this.socket.on('ice-candidate', async ({ from, candidate }) => {
+      if (!this.webrtc || !this.webrtcEnabled) return
+      await this.webrtc.handleIceCandidate(from, candidate)
     })
 
     this.socket.on('room_joined', data => {
@@ -40,6 +63,12 @@ class GameClient {
         const snapshotWorld = { ...data.snapshot, myId: this.socket.id }
         useStore.getState().setWorld(snapshotWorld)
         useStore.getState().setPredictedPlayer(snapshotWorld.players?.[this.socket.id] ? { ...snapshotWorld.players[this.socket.id] } : null)
+        
+        // Track room players for WebRTC connections
+        this.roomPlayers = new Set(Object.keys(snapshotWorld.players || {}))
+        this.roomPlayers.delete(this.socket.id) // Don't connect to self
+        this._initiatePeerConnections()
+
         if (data.map) {
           if (!this.clientPhysics) {
             this.clientPhysics = new ClientPhysics(
@@ -108,7 +137,19 @@ class GameClient {
       useStore.getState().setWorld({ ...nextWorld, myId })
     })
 
+    this.socket.on('player_joined', ({ id, username }) => {
+      if (this.webrtcEnabled && this.webrtc && id !== this.socket.id) {
+        this.roomPlayers.add(id)
+        // We'll be initiator for new players joining after us
+        this.webrtc.connectToPeer(id, true)
+      }
+    })
+
     this.socket.on('player_left', ({ id }) => {
+      if (this.webrtc) {
+        this.webrtc._closePeer(id)
+      }
+      this.roomPlayers.delete(id)
       useStore.setState(s => {
         const p = { ...s.players }
         delete p[id]
@@ -129,6 +170,50 @@ class GameClient {
       // Handled by component via callback
       if (this._roomsCallback) this._roomsCallback(rooms)
     })
+
+    this.socket.on('cheats_updated', ({ cheats }) => {
+      if (cheats) {
+        useStore.getState().setCheats(cheats)
+        const state = useStore.getState()
+        const myId = state.myId
+        if (myId && state.predictedPlayer) {
+          useStore.getState().setPredictedPlayer({
+            ...state.predictedPlayer,
+            cheats: { ...state.predictedPlayer.cheats, ...cheats }
+          })
+        }
+      }
+    })
+  }
+
+  /**
+   * Initialize WebRTC manager
+   */
+  _initWebRTC() {
+    if (!this.webrtcEnabled) return
+
+    this.webrtc = new WebRTCManager({
+      socket: this.socket,
+      localId: this.socket.id,
+      onMovementUpdate: (data) => {
+        // Handle incoming WebRTC movement updates (for future use with other players)
+      },
+      onPeerDisconnect: (peerId) => {
+        console.log(`Peer ${peerId} disconnected`)
+      }
+    })
+  }
+
+  /**
+   * Initiate P2P connections with existing room players
+   */
+  _initiatePeerConnections() {
+    if (!this.webrtc || !this.webrtcEnabled) return
+
+    // We're the last one to join, so we initiate connections
+    for (const peerId of this.roomPlayers) {
+      this.webrtc.connectToPeer(peerId, true)
+    }
   }
 
   disconnect() {
@@ -146,9 +231,20 @@ class GameClient {
     if (!this.socket) return
     this.seq++
     
-    // Send input to server
+    // Create input object
     const inp = { seq: this.seq, type: 'move', vx, vy, jump, jetpack, dt }
     this.pendingInputs.push(inp)
+    
+    // Try WebRTC first (lower latency), with Socket.IO fallback
+    let sentViaWebRTC = false
+    if (this.webrtcEnabled && this.webrtc) {
+      // Broadcast to all connected peers via WebRTC (0-1ms latency vs ~50ms via server)
+      const sendCount = this.webrtc.broadcastMovement(inp)
+      sentViaWebRTC = sendCount > 0
+    }
+    
+    // Always send to server via Socket.IO (authoritative)
+    // Server has latest state and will validate/correct any cheating
     this.socket.emit('input', inp)
     
     // Update local input state for client-side prediction
@@ -236,6 +332,11 @@ class GameClient {
     if (!this.socket) return
     this._roomsCallback = callback
     this.socket.emit('request_rooms')
+  }
+
+  applyCheatCode(code) {
+    if (!this.socket || !code) return
+    this.socket.emit('cheat_code', { code })
   }
 }
 

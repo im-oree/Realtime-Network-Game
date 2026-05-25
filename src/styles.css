@@ -794,6 +794,14 @@ body {
   letter-spacing: -0.02em;
 }
 
+.pause-cheats { margin-top: 8px; border-top: 1px dashed rgba(255,255,255,0.04); padding-top: 10px }
+.pause-cheats-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; color:var(--muted); font-size:0.9rem }
+.pause-cheats-input-row { display:flex; gap:8px; margin-bottom:8px }
+.pause-cheats-input { flex:1; padding:8px 10px; background:var(--surface2); border:1px solid var(--border); color:var(--text) }
+.pause-cheats-grid { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px }
+.pause-cheats-actions { display:flex; gap:8px }
+.pause-cheats-message { margin-top:8px; color:var(--text2); font-size:0.9rem }
+
 /* ─── Death Overlay ──────────────────────────────────────── */
 .death-overlay {
   position: fixed;

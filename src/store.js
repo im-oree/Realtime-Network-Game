@@ -27,6 +27,12 @@ export const useStore = create((set, get) => ({
   // UI
   paused:       false,
   showScoreboard: false,
+  cheats: {
+    infiniteHealth: false,
+    infiniteJetpack: false,
+    infiniteBullets: false,
+    infiniteLives: false
+  },
   // Mobile / device mode (persisted)
   // read previous preference from localStorage when available
   isMobileMode: (() => {
@@ -45,6 +51,15 @@ export const useStore = create((set, get) => ({
   setShowScoreboard: (v) => set({ showScoreboard: v }),
   setMobileMode: (v) => set({ isMobileMode: v }),
   setShowDevicePrompt: (v) => set({ showDevicePrompt: v }),
+  setCheats: (cheats) => set(state => ({ cheats: { ...state.cheats, ...cheats } })),
+  resetCheats: () => set({
+    cheats: {
+      infiniteHealth: false,
+      infiniteJetpack: false,
+      infiniteBullets: false,
+      infiniteLives: false
+    }
+  }),
 
   setMapData: (data) => set({ mapData: data }),
   setWeapons: (w)    => set({ weapons: w }),
@@ -73,6 +88,12 @@ export const useStore = create((set, get) => ({
     scores: {},
     mapData: null,
     predictedPlayer: null,
+    cheats: {
+      infiniteHealth: false,
+      infiniteJetpack: false,
+      infiniteBullets: false,
+      infiniteLives: false
+    },
     paused:  false
   })
 }))

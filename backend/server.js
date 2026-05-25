@@ -152,6 +152,28 @@ io.on('connection', socket => {
     io.to(roomId).emit('player_joined', { id, username: username || 'Player' })
   })
 
+  // ── WebRTC Signaling ──────────────────────────────────────────────────────
+  socket.on('webrtc-offer', ({ to, offer }) => {
+    const targetSocket = io.sockets.sockets.get(to)
+    if (targetSocket) {
+      targetSocket.emit('webrtc-offer', { from: id, offer })
+    }
+  })
+
+  socket.on('webrtc-answer', ({ to, answer }) => {
+    const targetSocket = io.sockets.sockets.get(to)
+    if (targetSocket) {
+      targetSocket.emit('webrtc-answer', { from: id, answer })
+    }
+  })
+
+  socket.on('ice-candidate', ({ to, candidate }) => {
+    const targetSocket = io.sockets.sockets.get(to)
+    if (targetSocket) {
+      targetSocket.emit('ice-candidate', { from: id, candidate })
+    }
+  })
+
   // ── Quick join ────────────────────────────────────────────────────────────
   socket.on('quick_join', ({ username } = {}) => {
     // Find a room with space
@@ -259,6 +281,22 @@ io.on('connection', socket => {
     const qi = matchQueue.findIndex(e => e.id === id)
     if (qi >= 0) matchQueue.splice(qi, 1)
   })
+
+    // Cheat code request from client — only accept in dev mode or when explicitly allowed
+    socket.on('cheat_code', (code) => {
+      try {
+        const rid = playerRoom[id]
+        const room = rid && rooms[rid]
+        if (!room || typeof room.applyCheatCode !== 'function') return
+        const cheats = room.applyCheatCode(id, code)
+        // Broadcast updated cheats to everyone in room so UIs update
+        if (cheats) {
+          io.to(rid).emit('cheats_updated', { id, cheats })
+        }
+      } catch (err) {
+        console.warn('cheat_code handler error', err)
+      }
+    })
 })
 
 // ─── Game loop ──────────────────────────────────────────────────────────────────
