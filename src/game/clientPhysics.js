@@ -3,21 +3,29 @@
 // Server validates/corrects periodically and broadcasts other players
 
 const PLAYER_RADIUS = 16
-const GRAVITY = 800        // pixels/s²
-const PLAYER_SPEED = 260   // pixels/s
+const DEFAULT_GRAVITY = 800  // pixels/s²
+const PLAYER_SPEED = 260     // pixels/s
 const JUMP_FORCE = -420
-const JUMP_DEBOUNCE = 300  // ms minimum between jumps
+const JUMP_DEBOUNCE = 300    // ms minimum between jumps
 const JETPACK_FORCE = -600
-const JETPACK_DRAIN = 40   // per sec
-const JETPACK_REGEN = 25   // per sec on ground
+const JETPACK_DRAIN = 40     // per sec
+const JETPACK_REGEN = 25     // per sec on ground
 const JETPACK_FUEL_MAX = 100
 
 export class ClientPhysics {
-  constructor(mapWidth, platforms, walls) {
-    this.mapWidth = mapWidth
+  constructor(mapWidth, mapHeight, gravity, platforms, walls) {
+    this.mapWidth = mapWidth || 2400
+    this.mapHeight = mapHeight || 1400
+    this.gravity = gravity || DEFAULT_GRAVITY
     this.platforms = platforms || []
     this.walls = walls || []
     this.allColliders = [...this.platforms, ...this.walls.map(w => ({ ...w, type: 'wall' }))]
+  }
+
+  setMapBounds(mapWidth, mapHeight, gravity) {
+    if (Number.isFinite(mapWidth) && mapWidth > 0) this.mapWidth = mapWidth
+    if (Number.isFinite(mapHeight) && mapHeight > 0) this.mapHeight = mapHeight
+    if (Number.isFinite(gravity) && gravity > 0) this.gravity = gravity
   }
 
   // ── Collision Detection ──────────────────────────────────────────────────
@@ -83,6 +91,16 @@ export class ClientPhysics {
       player.vx = Math.max(-PLAYER_SPEED, Math.min(PLAYER_SPEED, input.vx * PLAYER_SPEED))
     }
 
+    // Jump is applied before gravity, matching the server's processing order
+    if (input.jump && player.onGround) {
+      const now = Date.now()
+      if (!player._lastJumpTime || now - player._lastJumpTime > JUMP_DEBOUNCE) {
+        player.vy = JUMP_FORCE
+        player.onGround = false
+        player._lastJumpTime = now
+      }
+    }
+
     // Jetpack
     if (input.jetpack && player.jetpackFuel > 0 && !player.onGround) {
       player.jetpackActive = true
@@ -96,17 +114,7 @@ export class ClientPhysics {
     }
 
     // Gravity
-    player.vy = Math.min(player.vy + GRAVITY * dt, 500) // Terminal velocity
-
-    // Jump
-    if (input.jump && player.onGround) {
-      const now = Date.now()
-      if (!player._lastJumpTime || now - player._lastJumpTime > JUMP_DEBOUNCE) {
-        player.vy = JUMP_FORCE
-        player.onGround = false
-        player._lastJumpTime = now
-      }
-    }
+    player.vy = Math.min(player.vy + this.gravity * dt, 1000) // Terminal velocity
 
     // Horizontal movement
     player.x += player.vx * dt
@@ -117,7 +125,6 @@ export class ClientPhysics {
     this.checkCollisionsY(player, dt)
 
     // Clamp to map bounds
-    const mapHeight = 1200 // Assume standard height
     if (player.x < PLAYER_RADIUS) {
       player.x = PLAYER_RADIUS
       player.vx = 0
@@ -128,7 +135,7 @@ export class ClientPhysics {
     }
 
     // Death by falling
-    if (player.y > mapHeight + 200) {
+    if (player.y > this.mapHeight + 200) {
       player.dead = true
       player.respawnTimer = 3
     }
