@@ -74,7 +74,6 @@ export class GameRenderer {
         case 'shoot':
           if (ev.playerId === myId) {
             this.camera.shake(4, 0.1)
-            audioManager.shoot(ev.weaponId)
           } else {
             audioManager.shoot(ev.weaponId)
           }

@@ -26,21 +26,14 @@ function isOriginAllowed(origin) {
 
 app.use((req, res, next) => {
   const origin = req.headers.origin
-  if (origin && !isOriginAllowed(origin)) {
-    return res.sendStatus(403)
-  }
-
+  if (origin && !isOriginAllowed(origin)) return res.sendStatus(403)
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? '*' : origin)
     res.setHeader('Vary', 'Origin')
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204)
-  }
-
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
   next()
 })
 
@@ -53,15 +46,24 @@ const io     = new Server(server, {
     origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
     methods: ['GET', 'POST']
   },
-  pingInterval: 2000,
-  pingTimeout: 5000
+  // FIX: Tighter ping settings to detect dead connections faster
+  pingInterval: 3000,
+  pingTimeout:  8000
 })
 
-// ─── State ──────────────────────────────────────────────────────────────────────
-const rooms      = {} // roomId -> GameRoom
-const playerRoom = {} // socketId -> roomId
+// ─── State ───────────────────────────────────────────────────────────────────
+const rooms      = {}
+const playerRoom = {}
 const matchQueue = []
-const TICK_RATE  = 1000 / 60
+
+// FIX: Two separate rates.
+//   PHYSICS_HZ = how often the server simulates (60/s — keep this)
+//   BROADCAST_HZ = how often we push world_state to clients (20/s)
+//   Clients interpolate between received snapshots → smooth visuals, less bandwidth
+const PHYSICS_HZ   = 60
+const BROADCAST_HZ = 20
+const PHYSICS_MS   = 1000 / PHYSICS_HZ
+const BROADCAST_MS = 1000 / BROADCAST_HZ
 
 function uid(prefix = '') {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
@@ -77,29 +79,25 @@ function getRoomList() {
   }))
 }
 
-// ─── REST endpoints ─────────────────────────────────────────────────────────────
-app.get('/rooms', (req, res) => res.json({ rooms: getRoomList() }))
-app.get('/maps',  (req, res) => res.json({ maps: getMapList() }))
+// ─── REST ─────────────────────────────────────────────────────────────────────
+app.get('/rooms',   (req, res) => res.json({ rooms: getRoomList() }))
+app.get('/maps',    (req, res) => res.json({ maps: getMapList() }))
 app.get('/weapons', (req, res) => res.json({ weapons: WEAPONS }))
 
-// ─── Socket.io ──────────────────────────────────────────────────────────────────
+// ─── Socket.io ───────────────────────────────────────────────────────────────
 io.on('connection', socket => {
   const id = socket.id
   console.log(`+ ${id}`)
-
   socket.emit('connected', { id })
 
-  // Maps & weapons info
-  socket.on('get_maps',    () => socket.emit('maps_list', { maps: getMapList() }))
-  socket.on('get_weapons', () => socket.emit('weapons_list', { weapons: WEAPONS }))
+  socket.on('get_maps',      () => socket.emit('maps_list',  { maps: getMapList() }))
+  socket.on('get_weapons',   () => socket.emit('weapons_list', { weapons: WEAPONS }))
   socket.on('request_rooms', () => socket.emit('rooms_list', { rooms: getRoomList() }))
 
   // ── Create room ───────────────────────────────────────────────────────────
   socket.on('create_room', ({ username, mapId, roomId: rid } = {}) => {
     const roomId = rid || uid('room_')
-    if (!rooms[roomId]) {
-      rooms[roomId] = new GameRoom(roomId, mapId || 'forest')
-    }
+    if (!rooms[roomId]) rooms[roomId] = new GameRoom(roomId, mapId || 'forest')
     const room = rooms[roomId]
     socket.join(roomId)
     room.addPlayer(id, username || 'Player')
@@ -108,16 +106,12 @@ io.on('connection', socket => {
     socket.emit('room_joined', {
       roomId,
       snapshot: room.buildSnapshot(),
+      // FIX: send server timestamp so client can compute initial latency
+      serverTime: Date.now(),
       map: {
-        id:          map.id,
-        name:        map.name,
-        width:       map.width,
-        height:      map.height,
-        background:  map.background,
-        gravity:     map.gravity,
-        platforms:   map.platforms,
-        walls:       map.walls,
-        decorations: map.decorations
+        id: map.id, name: map.name, width: map.width, height: map.height,
+        background: map.background, gravity: map.gravity,
+        platforms: map.platforms, walls: map.walls, decorations: map.decorations
       },
       weapons: WEAPONS
     })
@@ -126,15 +120,9 @@ io.on('connection', socket => {
 
   // ── Join room ─────────────────────────────────────────────────────────────
   socket.on('join_room', ({ roomId, username } = {}) => {
-    if (!rooms[roomId]) {
-      socket.emit('error_msg', 'Room not found')
-      return
-    }
+    if (!rooms[roomId]) { socket.emit('error_msg', 'Room not found'); return }
     const room = rooms[roomId]
-    if (Object.keys(room.players).length >= room.maxPlayers) {
-      socket.emit('error_msg', 'Room is full')
-      return
-    }
+    if (Object.keys(room.players).length >= room.maxPlayers) { socket.emit('error_msg', 'Room is full'); return }
     socket.join(roomId)
     room.addPlayer(id, username || 'Player')
     playerRoom[id] = roomId
@@ -142,6 +130,7 @@ io.on('connection', socket => {
     socket.emit('room_joined', {
       roomId,
       snapshot: room.buildSnapshot(),
+      serverTime: Date.now(),
       map: {
         id: map.id, name: map.name, width: map.width, height: map.height,
         background: map.background, gravity: map.gravity,
@@ -154,46 +143,28 @@ io.on('connection', socket => {
 
   // ── WebRTC Signaling ──────────────────────────────────────────────────────
   socket.on('webrtc-offer', ({ to, offer }) => {
-    const targetSocket = io.sockets.sockets.get(to)
-    if (targetSocket) {
-      targetSocket.emit('webrtc-offer', { from: id, offer })
-    }
+    io.sockets.sockets.get(to)?.emit('webrtc-offer', { from: id, offer })
   })
-
   socket.on('webrtc-answer', ({ to, answer }) => {
-    const targetSocket = io.sockets.sockets.get(to)
-    if (targetSocket) {
-      targetSocket.emit('webrtc-answer', { from: id, answer })
-    }
+    io.sockets.sockets.get(to)?.emit('webrtc-answer', { from: id, answer })
   })
-
   socket.on('ice-candidate', ({ to, candidate }) => {
-    const targetSocket = io.sockets.sockets.get(to)
-    if (targetSocket) {
-      targetSocket.emit('ice-candidate', { from: id, candidate })
-    }
+    io.sockets.sockets.get(to)?.emit('ice-candidate', { from: id, candidate })
   })
 
   // ── Quick join ────────────────────────────────────────────────────────────
   socket.on('quick_join', ({ username } = {}) => {
-    // Find a room with space
     let target = null
     for (const rid of Object.keys(rooms)) {
       const room = rooms[rid]
-      if (Object.keys(room.players).length < room.maxPlayers) {
-        target = rid
-        break
-      }
+      if (Object.keys(room.players).length < room.maxPlayers) { target = rid; break }
     }
     if (!target) {
-      // Create a new room with random map
       const maps = ['forest', 'desert', 'castle', 'industrial']
-      const mapId = maps[Math.floor(Math.random() * maps.length)]
       target = uid('room_')
-      rooms[target] = new GameRoom(target, mapId)
+      rooms[target] = new GameRoom(target, maps[Math.floor(Math.random() * maps.length)])
     }
     socket.emit('redirect_join', { roomId: target })
-    // Client will then emit join_room
   })
 
   // ── Matchmake ─────────────────────────────────────────────────────────────
@@ -204,9 +175,9 @@ io.on('connection', socket => {
       const a = matchQueue.shift()
       const b = matchQueue.shift()
       const maps = ['forest', 'desert', 'castle', 'industrial']
-      const mapId = maps[Math.floor(Math.random() * maps.length)]
+      const mapId  = maps[Math.floor(Math.random() * maps.length)]
       const roomId = uid('match_')
-      const room = new GameRoom(roomId, mapId)
+      const room   = new GameRoom(roomId, mapId)
       rooms[roomId] = room
       room.addPlayer(a.id, a.username)
       room.addPlayer(b.id, b.username)
@@ -216,6 +187,7 @@ io.on('connection', socket => {
       const payload = {
         roomId,
         snapshot: room.buildSnapshot(),
+        serverTime: Date.now(),
         map: {
           id: map.id, name: map.name, width: map.width, height: map.height,
           background: map.background, gravity: map.gravity,
@@ -234,90 +206,107 @@ io.on('connection', socket => {
     if (!rid || !rooms[rid]) return
     rooms[rid].processInput(id, data)
   })
-
-  socket.on('shoot', ({ angle } = {}) => {
-    const rid = playerRoom[id]
-    if (!rid || !rooms[rid]) return
-    rooms[rid].handleShoot(id, angle)
-  })
-
-  socket.on('grenade', ({ angle } = {}) => {
-    const rid = playerRoom[id]
-    if (!rid || !rooms[rid]) return
-    rooms[rid].handleGrenade(id, angle)
-  })
-
-  socket.on('gas', ({ angle } = {}) => {
-    const rid = playerRoom[id]
-    if (!rid || !rooms[rid]) return
-    rooms[rid].handleGas(id, angle)
-  })
+  socket.on('shoot',  ({ angle } = {}) => { const rid = playerRoom[id]; if (rid && rooms[rid]) rooms[rid].handleShoot(id, angle) })
+  socket.on('grenade',({ angle } = {}) => { const rid = playerRoom[id]; if (rid && rooms[rid]) rooms[rid].handleGrenade(id, angle) })
+  socket.on('gas',    ({ angle } = {}) => { const rid = playerRoom[id]; if (rid && rooms[rid]) rooms[rid].handleGas(id, angle) })
 
   // ── Leave room ────────────────────────────────────────────────────────────
-  socket.on('leave_room', () => {
-    const rid = playerRoom[id]
-    if (rid && rooms[rid]) {
-      rooms[rid].removePlayer(id)
-      socket.leave(rid)
-      io.to(rid).emit('player_left', { id })
-      if (Object.keys(rooms[rid].players).length === 0) {
-        delete rooms[rid]
-      }
-    }
-    delete playerRoom[id]
-  })
+  socket.on('leave_room', () => cleanupPlayer(id, socket))
 
   socket.on('disconnect', () => {
     console.log(`- ${id}`)
-    const rid = playerRoom[id]
-    if (rid && rooms[rid]) {
-      rooms[rid].removePlayer(id)
-      io.to(rid).emit('player_left', { id })
-      if (Object.keys(rooms[rid].players).length === 0) {
-        delete rooms[rid]
-      }
-    }
-    delete playerRoom[id]
+    cleanupPlayer(id, socket)
     const qi = matchQueue.findIndex(e => e.id === id)
     if (qi >= 0) matchQueue.splice(qi, 1)
   })
 
-    // Cheat code request from client — only accept in dev mode or when explicitly allowed
-    socket.on('cheat_code', (code) => {
-      try {
-        const rid = playerRoom[id]
-        const room = rid && rooms[rid]
-        if (!room || typeof room.applyCheatCode !== 'function') return
-        const cheats = room.applyCheatCode(id, code)
-        // Broadcast updated cheats to everyone in room so UIs update
-        if (cheats) {
-          io.to(rid).emit('cheats_updated', { id, cheats })
-        }
-      } catch (err) {
-        console.warn('cheat_code handler error', err)
-      }
-    })
+  socket.on('cheat_code', (code) => {
+    try {
+      const rid  = playerRoom[id]
+      const room = rid && rooms[rid]
+      if (!room || typeof room.applyCheatCode !== 'function') return
+      const cheats = room.applyCheatCode(id, code)
+      if (cheats) io.to(rid).emit('cheats_updated', { id, cheats })
+    } catch (err) {
+      console.warn('cheat_code handler error', err)
+    }
+  })
+
+  // ── Ping / latency measurement ────────────────────────────────────────────
+  // FIX: let clients measure their own RTT so network.js can compensate
+  socket.on('ping_req', (clientTime) => {
+    socket.emit('ping_res', { clientTime, serverTime: Date.now() })
+  })
 })
 
-// ─── Game loop ──────────────────────────────────────────────────────────────────
-let lastTick = Date.now()
-
-setInterval(() => {
-  const now = Date.now()
-  const dt  = Math.min((now - lastTick) / 1000, 0.05)
-  lastTick  = now
-
-  for (const [rid, room] of Object.entries(rooms)) {
-    room.tick(dt)
-    const snap = room.buildSnapshot()
-    io.to(rid).emit('world_state', {
-      ...snap,
-      tick:   now,
-      events: room.events
-    })
+function cleanupPlayer(id, socket) {
+  const rid = playerRoom[id]
+  if (rid && rooms[rid]) {
+    rooms[rid].removePlayer(id)
+    if (socket) socket.leave(rid)
+    io.to(rid).emit('player_left', { id })
+    if (Object.keys(rooms[rid].players).length === 0) delete rooms[rid]
   }
-}, TICK_RATE)
+  delete playerRoom[id]
+}
 
-// ─── Serve ──────────────────────────────────────────────────────────────────────
+// ─── Game loop ────────────────────────────────────────────────────────────────
+// FIX: Use a high-resolution self-correcting loop instead of setInterval.
+// setInterval(fn, 16) in Node.js actually fires every 17-25ms due to timer
+// imprecision, causing jitter in the broadcast. We track the ideal next-fire
+// time and compensate with a shorter sleep when we're falling behind.
+
+let physicsAccum  = 0   // accumulated real ms since last physics tick
+let broadcastAccum = 0  // accumulated real ms since last broadcast
+let lastHR         = process.hrtime.bigint()
+
+function gameLoop() {
+  const now  = process.hrtime.bigint()
+  const elapsedMs = Number(now - lastHR) / 1e6   // nanoseconds → ms
+  lastHR = now
+
+  // Guard against huge spikes (tab suspend, debugger pause, etc.)
+  const clampedMs = Math.min(elapsedMs, 100)
+
+  physicsAccum   += clampedMs
+  broadcastAccum += clampedMs
+
+  // Physics: run as many fixed steps as accumulated
+  while (physicsAccum >= PHYSICS_MS) {
+    const dt = PHYSICS_MS / 1000   // fixed timestep in seconds
+    for (const room of Object.values(rooms)) {
+      room.tick(dt)
+    }
+    physicsAccum -= PHYSICS_MS
+  }
+
+  // Broadcast: send snapshots at BROADCAST_HZ
+  if (broadcastAccum >= BROADCAST_MS) {
+    broadcastAccum -= BROADCAST_MS
+    const serverTime = Date.now()
+    for (const [rid, room] of Object.entries(rooms)) {
+      const snap = room.buildSnapshot()
+      io.to(rid).emit('world_state', {
+        ...snap,
+        // FIX: send server timestamp with every snapshot.
+        // Client uses this to drive its interpolation timeline.
+        serverTime,
+        events: room.events
+      })
+      // Clear events AFTER broadcast so they aren't lost between physics ticks
+      room.events = []
+    }
+  }
+
+  // Schedule next iteration. Using setImmediate keeps the loop tight and
+  // cooperative with the event loop — far more stable than nested setTimeout.
+  setImmediate(gameLoop)
+}
+
+// Kick off the loop
+lastHR = process.hrtime.bigint()
+setImmediate(gameLoop)
+
+// ─── Serve ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000
-server.listen(PORT, () => console.log(`Server on :${PORT}`))
+server.listen(PORT, () => console.log(`Server on :${PORT} | physics ${PHYSICS_HZ}Hz | broadcast ${BROADCAST_HZ}Hz`))

@@ -5,6 +5,8 @@ import { getApiBaseUrl } from './network'
 import ClientPhysics from './clientPhysics'
 import WebRTCManager from './webrtcManager'
 import { OFFLINE_MAP, OFFLINE_WEAPONS, createOfflinePlayer } from './offlinePractice'
+import { createOfflineBots, thinkOfflineBot } from './offlineBrain'
+import audioManager from './audioManager'
 
 class GameClient {
   constructor() {
@@ -36,6 +38,7 @@ class GameClient {
     this.localInput = { vx: 0, vy: 0, jump: false, jetpack: false }
 
     const player = createOfflinePlayer(username)
+    const bots = createOfflineBots(3)
     this.clientPhysics = new ClientPhysics(
       OFFLINE_MAP.width,
       OFFLINE_MAP.height,
@@ -44,14 +47,20 @@ class GameClient {
       OFFLINE_MAP.walls
     )
 
+    const players = {
+      [player.id]: { ...player },
+      ...Object.fromEntries(bots.map(bot => [bot.id, { ...bot }]))
+    }
+
     this.offlineWorld = {
-      players: { [player.id]: { ...player } },
-      playersExtrapolated: { [player.id]: { ...player } },
+      players,
+      playersExtrapolated: { ...players },
+      botIds: bots.map(bot => bot.id),
       projectiles: [],
       grenades: [],
       gasClouds: [],
       pickups: [],
-      scores: { [player.id]: { kills: 0, deaths: 0 } },
+      scores: Object.fromEntries(Object.keys(players).map(id => [id, { kills: 0, deaths: 0 }])),
       mapSize: { w: OFFLINE_MAP.width, h: OFFLINE_MAP.height },
       events: []
     }
@@ -151,44 +160,50 @@ class GameClient {
 
       if (myId && nextWorld.players[myId]) {
         const serverPlayer = nextWorld.players[myId]
-        const lastAck = serverPlayer.lastProcessedSeq || 0
+        const localPlayer = state.predictedPlayer || state.players?.[myId]
 
-        // Remove acknowledged inputs from queue
-        while (this.pendingInputs.length && this.pendingInputs[0].seq <= lastAck) {
-          this.pendingInputs.shift()
-        }
-
-        // Keep the local player position fully client-owned.
-        // The server only updates authority-only state here.
-        const localPlayer = state.predictedPlayer || state.players?.[myId] || serverPlayer
-        const syncedPlayer = {
-          ...localPlayer,
-          id: myId,
-          hp: serverPlayer.hp,
-          armor: serverPlayer.armor,
-          ammo: serverPlayer.ammo,
-          weapon: serverPlayer.weapon,
-          kills: serverPlayer.kills,
-          deaths: serverPlayer.deaths,
-          dead: serverPlayer.dead,
-          respawnTimer: serverPlayer.respawnTimer,
-          lastProcessedSeq: serverPlayer.lastProcessedSeq,
-          color: serverPlayer.color,
-          username: serverPlayer.username
-        }
-
-        if (!syncedPlayer.dead) {
-          for (const inp of this.pendingInputs) {
-            this.clientPhysics?.update(syncedPlayer, inp, inp.dt ?? (TICK_MS / 1000))
+        // Only update non-movement state from server
+        // Client movement is 100% local and runs every frame in updateClientPhysics
+        if (localPlayer) {
+          const updatedPlayer = {
+            ...localPlayer,
+            id: myId,
+            // Combat/authority state from server only
+            hp: serverPlayer.hp,
+            armor: serverPlayer.armor,
+            ammo: serverPlayer.ammo,
+            weapon: serverPlayer.weapon,
+            kills: serverPlayer.kills,
+            deaths: serverPlayer.deaths,
+            dead: serverPlayer.dead,
+            respawnTimer: serverPlayer.respawnTimer,
+            color: serverPlayer.color,
+            username: serverPlayer.username,
+            // Preserve all position/velocity fields from local prediction
+            // They are ONLY updated by updateClientPhysics, never by server
           }
-        }
 
-        useStore.getState().setPredictedPlayer({
-          ...syncedPlayer
-        })
-        if (serverPlayer.cheats) {
-          const existing = useStore.getState().predictedPlayer || {}
-          useStore.getState().setPredictedPlayer({ ...existing, ...serverPlayer, cheats: { ...(existing.cheats || {}), ...serverPlayer.cheats } })
+          // Only snap position back if major cheat detected (>50px drift)
+          if (!serverPlayer.dead && localPlayer && serverPlayer.x && serverPlayer.y) {
+            const dx = localPlayer.x - serverPlayer.x
+            const dy = localPlayer.y - serverPlayer.y
+            const drift = Math.sqrt(dx * dx + dy * dy)
+            
+            if (drift > 50) {
+              // Major drift detected - snap back to server position
+              updatedPlayer.x = serverPlayer.x
+              updatedPlayer.y = serverPlayer.y
+              updatedPlayer.vx = serverPlayer.vx || 0
+              updatedPlayer.vy = serverPlayer.vy || 0
+            }
+          }
+
+          // Update cheats from server if present
+          if (serverPlayer.cheats) {
+            updatedPlayer.cheats = { ...(localPlayer.cheats || {}), ...serverPlayer.cheats }
+          }
+
+          useStore.getState().setPredictedPlayer(updatedPlayer)
         }
       }
 
@@ -392,6 +407,11 @@ class GameClient {
       this._offlineShoot(angle)
       return
     }
+    const state = useStore.getState()
+    const player = state.predictedPlayer || state.players?.[state.myId]
+    if (player) {
+      audioManager.shoot(player.weapon)
+    }
     this.socket.emit('shoot', { angle })
   }
 
@@ -470,7 +490,9 @@ class GameClient {
     const player = state.predictedPlayer || state.players?.[state.myId]
     if (!player) return
 
-    const nextEvents = []
+    this._advanceOfflineBots(dt)
+
+    const nextEvents = [...(this.offlineWorld.events || [])]
     const nextProjectiles = []
     const nextGrenades = []
     const nextGasClouds = []
@@ -492,12 +514,7 @@ class GameClient {
         })
       }
       useStore.getState().setPredictedPlayer(nextPlayer)
-      useStore.getState().setWorld({
-        ...this.offlineWorld,
-        players: { [player.id]: nextPlayer },
-        playersExtrapolated: { [player.id]: nextPlayer },
-        myId: player.id
-      })
+      this._emitOfflineWorldPatch()
       return
     }
 
@@ -581,8 +598,8 @@ class GameClient {
 
     this.offlineWorld = {
       ...this.offlineWorld,
-      players: { [player.id]: { ...player } },
-      playersExtrapolated: { [player.id]: { ...player } },
+      players: { ...(this.offlineWorld.players || {}), [player.id]: { ...player } },
+      playersExtrapolated: { ...(this.offlineWorld.playersExtrapolated || this.offlineWorld.players || {}), [player.id]: { ...player } },
       projectiles: nextProjectiles,
       grenades: nextGrenades,
       gasClouds: nextGasClouds,
@@ -608,7 +625,10 @@ class GameClient {
   _emitOfflineWorldPatch(patch = {}) {
     if (!this.offlineWorld) return
     const player = this._offlinePlayer()
-    const players = player ? { [player.id]: { ...player } } : {}
+    const players = { ...(this.offlineWorld.players || {}) }
+    if (player) {
+      players[player.id] = { ...player }
+    }
     this.offlineWorld = {
       ...this.offlineWorld,
       ...patch,
@@ -618,25 +638,13 @@ class GameClient {
     useStore.getState().setWorld({ ...this.offlineWorld, myId: player?.id })
   }
 
-  _offlineShoot(angle) {
-    const player = this._offlinePlayer()
-    if (!player || player.dead) return
-
+  _buildOfflineShot(player, angle, projectiles = []) {
     const weapon = OFFLINE_WEAPONS[player.weapon] || OFFLINE_WEAPONS.pistol
-    const now = Date.now()
-    const cooldown = player.rapidFire ? weapon.fireRate * 0.5 : weapon.fireRate
-    if (now - (player.lastShot || 0) < cooldown) return
-    if ((player.ammo || 0) <= 0) {
-      this._offlineReload()
-      return
-    }
-
-    const nextPlayer = { ...player, lastShot: now, angle }
+    const nextPlayer = { ...player, lastShot: Date.now(), angle }
     if (!nextPlayer.cheats?.infiniteBullets) {
       nextPlayer.ammo = Math.max(0, (nextPlayer.ammo || 0) - 1)
     }
 
-    const projectiles = [...(this.offlineWorld?.projectiles || [])]
     for (let i = 0; i < weapon.bulletsPerShot; i++) {
       const spreadAngle = angle + (Math.random() - 0.5) * weapon.spread * 2
       const originX = nextPlayer.x + Math.cos(spreadAngle) * 24
@@ -660,14 +668,151 @@ class GameClient {
       })
     }
 
+    return { nextPlayer, projectiles, weapon }
+  }
+
+  _advanceOfflineBots(dt) {
+    if (!this.offlineWorld?.botIds?.length) return
+
+    const players = { ...(this.offlineWorld.players || {}) }
+    const projectiles = [...(this.offlineWorld.projectiles || [])]
+    const grenades = [...(this.offlineWorld.grenades || [])]
+    const gasClouds = [...(this.offlineWorld.gasClouds || [])]
+    const events = []
+    const human = this._offlinePlayer()
+
+    if (human) {
+      players[human.id] = { ...human }
+    }
+
+    const map = OFFLINE_MAP
+    const botIds = this.offlineWorld.botIds || []
+
+    for (const [botIndex, botId] of botIds.entries()) {
+      const bot = players[botId]
+      if (!bot) continue
+
+      if (bot.dead) {
+        bot.respawnTimer = Math.max(0, (bot.respawnTimer ?? 0) - dt)
+        if (bot.respawnTimer <= 0) {
+          const spawn = map.spawnPoints[(botIndex + 1) % map.spawnPoints.length] || map.spawnPoints[0]
+          Object.assign(bot, createOfflinePlayer(bot.username), {
+            id: bot.id,
+            username: bot.username,
+            x: spawn.x,
+            y: spawn.y,
+            color: bot.color,
+            weapon: bot.weapon,
+            ammo: (OFFLINE_WEAPONS[bot.weapon] || OFFLINE_WEAPONS.pistol).magSize,
+            isBot: true,
+            brain: bot.brain,
+            cheats: { ...(bot.cheats || {}) }
+          })
+          events.push({ type: 'respawn', playerId: bot.id, x: bot.x, y: bot.y })
+        }
+        continue
+      }
+
+      const command = thinkOfflineBot(bot, { players, map }, dt)
+
+      if (!bot.reloading && bot.ammo <= 0) {
+        bot.reloading = true
+        bot.reloadTimer = (OFFLINE_WEAPONS[bot.weapon] || OFFLINE_WEAPONS.pistol).reloadTime / 1000
+      }
+
+      if (bot.reloading) {
+        bot.reloadTimer = Math.max(0, (bot.reloadTimer ?? 0) - dt)
+        if (bot.reloadTimer <= 0) {
+          bot.reloading = false
+          bot.ammo = (OFFLINE_WEAPONS[bot.weapon] || OFFLINE_WEAPONS.pistol).magSize
+        }
+      }
+
+      if (this.clientPhysics) {
+        this.clientPhysics.update(bot, command, dt)
+      }
+
+      bot.angle = command.angle
+      bot.jetpackActive = !!command.jetpack
+
+      if (command.shoot && !bot.reloading && bot.ammo > 0) {
+        const shot = this._buildOfflineShot(bot, command.angle, projectiles)
+        Object.assign(bot, shot.nextPlayer, { isBot: true, brain: bot.brain })
+        events.push({ type: 'shoot', playerId: bot.id, x: bot.x, y: bot.y, angle: command.angle, weaponId: shot.weapon.id })
+      }
+
+      if (command.grenade && (bot.grenades || 0) > 0) {
+        bot.grenades -= 1
+        bot.lastGrenade = Date.now()
+        grenades.push({
+          id: `offline_gr_${Date.now().toString(36)}_${bot.id}`,
+          owner: bot.id,
+          x: bot.x + Math.cos(command.angle) * 20,
+          y: bot.y + Math.sin(command.angle) * 20,
+          vx: Math.cos(command.angle) * 400,
+          vy: Math.sin(command.angle) * 400 - 150,
+          fuse: 2.5,
+          bounces: 0
+        })
+        events.push({ type: 'grenade', playerId: bot.id, x: bot.x, y: bot.y, angle: command.angle })
+      }
+
+      if (command.gas && (bot.gasCanisters || 0) > 0) {
+        bot.gasCanisters -= 1
+        bot.lastGas = Date.now()
+        gasClouds.push({
+          id: `offline_gas_${Date.now().toString(36)}_${bot.id}`,
+          owner: bot.id,
+          x: bot.x + Math.cos(command.angle) * 200,
+          y: bot.y + Math.sin(command.angle) * 200,
+          radius: 90,
+          duration: 5,
+          life: 5,
+          damage: 8
+        })
+        events.push({ type: 'gas', playerId: bot.id, x: bot.x, y: bot.y, angle: command.angle })
+      }
+
+      players[bot.id] = bot
+    }
+
+    this.offlineWorld = {
+      ...this.offlineWorld,
+      players,
+      playersExtrapolated: { ...players },
+      projectiles,
+      grenades,
+      gasClouds,
+      events: [...(this.offlineWorld.events || []), ...events]
+    }
+  }
+
+  _offlineShoot(angle) {
+    const player = this._offlinePlayer()
+    if (!player || player.dead) return
+
+    const weapon = OFFLINE_WEAPONS[player.weapon] || OFFLINE_WEAPONS.pistol
+    const now = Date.now()
+    const cooldown = player.rapidFire ? weapon.fireRate * 0.5 : weapon.fireRate
+    if (now - (player.lastShot || 0) < cooldown) return
+    if ((player.ammo || 0) <= 0) {
+      this._offlineReload()
+      return
+    }
+
+    const shot = this._buildOfflineShot({ ...player, ammo: player.ammo, rapidFire: player.rapidFire, cheats: player.cheats }, angle, [...(this.offlineWorld?.projectiles || [])])
+    const nextPlayer = shot.nextPlayer
+    const projectiles = shot.projectiles
+
     this.offlineWorld = {
       ...this.offlineWorld,
       projectiles,
       events: [
         ...(this.offlineWorld?.events || []),
-        { type: 'shoot', playerId: nextPlayer.id, x: nextPlayer.x, y: nextPlayer.y, angle, weaponId: weapon.id }
+        { type: 'shoot', playerId: nextPlayer.id, x: nextPlayer.x, y: nextPlayer.y, angle, weaponId: shot.weapon.id }
       ]
     }
+    audioManager.shoot(shot.weapon.id)
     useStore.getState().setPredictedPlayer(nextPlayer)
     this._emitOfflineWorldPatch({ projectiles, events: this.offlineWorld.events })
   }

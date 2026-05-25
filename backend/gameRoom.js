@@ -40,8 +40,8 @@ class GameRoom {
     this.maxPlayers = maxPlayers
     this.players = {}
     this.inputQueues = {}
-    // per-room option to allow cheats via env var
-    this.allowCheats = process.env.ALLOW_CHEATS === 'true' || process.env.NODE_ENV !== 'production'
+    // Cheats always allowed (dev and production) by design
+    this.allowCheats = true
     this.projectiles = {}
     this.grenades = {}
     this.gasClouds = {}
@@ -653,7 +653,6 @@ class GameRoom {
   applyCheatCode(playerId, code) {
     const player = this.players[playerId]
     if (!player) return null
-    if (!this.allowCheats) return null
     const raw = String(code || '').trim().toUpperCase()
     const setAll = (v) => {
       player.cheats.infiniteHealth = v

@@ -69,7 +69,10 @@ export const useStore = create((set, get) => ({
   setPredictedPlayer: (player) => set({ predictedPlayer: player }),
 
   setWorld: (world) => set(state => ({
-    players:     world.players     ?? state.players,
+    players:     world.players     ? {
+      ...world.players,
+      ...(state.predictedPlayer && state.myId ? { [state.myId]: state.predictedPlayer } : {})
+    } : state.players,
     playersExtrapolated: world.playersExtrapolated ?? world.players ?? state.playersExtrapolated,
     projectiles: world.projectiles ?? state.projectiles,
     grenades:    world.grenades    ?? state.grenades,
