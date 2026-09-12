@@ -1,491 +1,376 @@
-# Grid Wars
+<p align="center">
+  <img src="docs/logo.svg" width="180" alt="Grid Wars logo" />
+</p>
 
-I built Grid Wars as a real-time multiplayer arena shooter with a server-authoritative game loop, client-side prediction, custom canvas rendering, and a lightweight room-based multiplayer flow. The goal of the project was to make a fast, browser-playable shooter that feels responsive even over the network while still keeping the server in charge of the real game state.
+<h1 align="center">Grid Wars</h1>
 
-This README is the full project documentation for the codebase. It explains what I built, how each part works, what technologies I used, how the game flows from menu to match, and how to run it locally.
+<p align="center">
+  <strong>A real-time, browser-based 2D arena shooter.</strong><br/>
+  Create a room, invite up to 8 players, pick a map, and fight with guns, grenades, gas and jetpacks — or practice offline against AI bots.
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/02-main-menu.png" alt="Grid Wars main menu" width="800" />
+</p>
+
+---
 
 ## Table of Contents
 
-1. [Project Overview](#project-overview)
-2. [What I Built](#what-i-built)
-3. [Tech Stack](#tech-stack)
-4. [Project Structure](#project-structure)
-5. [Game Features](#game-features)
-6. [Controls](#controls)
-7. [Gameplay Systems](#gameplay-systems)
-8. [Networking and Multiplayer Flow](#networking-and-multiplayer-flow)
-9. [Rendering and UI](#rendering-and-ui)
-10. [Maps and Weapons](#maps-and-weapons)
-11. [Storage and Settings](#storage-and-settings)
-12. [How to Run the Project](#how-to-run-the-project)
-13. [Deployment Environment Variables](#deployment-environment-variables)
-14. [Notes and Current Limitations](#notes-and-current-limitations)
+- [What is Grid Wars?](#what-is-grid-wars)
+- [Screenshots](#screenshots)
+- [Features at a Glance](#features-at-a-glance)
+- [Architecture: What the Frontend and Backend Do](#architecture-what-the-frontend-and-backend-do)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [Gameplay Guide](#gameplay-guide)
+- [Networking Internals](#networking-internals)
+- [Project Structure](#project-structure)
+- [Deployment](#deployment)
+- [Troubleshooting & Known Quirks](#troubleshooting--known-quirks)
+- [Tech Stack](#tech-stack)
 
-## Project Overview
+---
 
-Grid Wars is a 2D browser-based multiplayer shooter where multiple players join the same room, move across platform maps, shoot each other, throw grenades, deploy gas, pick up powerups, and respawn after being eliminated. The server owns the actual world simulation, while the client predicts movement locally so the game stays smooth.
+## What is Grid Wars?
 
-The app is split into two major parts:
+**Grid Wars** is a multiplayer arena shooter that runs entirely in the browser. It is built as a classic client–server game:
 
-- A Vite + React frontend in the repository root under `src/`
-- An Express + Socket.io backend in `backend/`
+- a **React + Vite frontend** that renders the game on a canvas, plays all sound effects (synthesized live — no audio files), and predicts your movement locally so the game feels instant; and
+- an **Express + Socket.IO backend** that runs the *authoritative* simulation — physics, bullets, grenades, pickups, health, respawns — so every player sees the same truth.
 
-The frontend handles the menu flow, local input, rendering, HUD, and user settings. The backend handles room creation, matchmaking, authoritative physics, combat, pickups, respawning, and world state broadcasts.
+It is for anyone who wants a zero-install, quick-to-join deathmatch: share a room code and play. It also has a fully offline **Practice mode** against three AI bots, and a **mobile mode** with touch joysticks, so it works on phones and tablets too.
 
-## What I Built
+Design highlights:
 
-I built the game with these main pieces:
+- **Rooms up to 8 players** with a room browser, quick-play and matchmaking
+- **4 hand-designed maps** — Enchanted Forest, Arid Canyon, Dark Fortress, Abandoned Factory
+- **6 weapons** with distinct roles (from an 18-damage pistol to an explosive RPG)
+- **Pickups & power-ups**: health, armor, jet fuel, grenades, weapons, speed boost, rapid fire
+- **Tactical tools**: frag grenades and gas clouds that deal damage over time
+- **Jetpacks** with a fuel budget on every player
+- **Built-in cheat codes** (this is a sandbox-style game — cheats are a feature, toggled from the pause menu)
+- **Scoreboard, kill feed, minimap**, respawn timer — the full arena-shooter HUD
 
-- A main menu with quick play, matchmaking, room creation, room browsing, and settings
-- A room-based multiplayer flow with create room, join room, quick join, and matchmake actions
-- A server-authoritative combat loop with bullets, grenades, gas clouds, damage, kills, and respawns
-- Custom maps with platforms, walls, spawn points, pickup spawns, and background data
-- A canvas renderer with camera follow, particle effects, minimap, scoreboards, and respawn overlays
-- A HUD that shows weapon, ammo, health, armor, jetpack fuel, grenades, gas, and kills
-- Persisted local settings for username, controls, and visual/audio preferences
+---
 
-## Tech Stack
+## Screenshots
 
-### Frontend
+All screenshots below are **real gameplay captures** taken by an automated Playwright harness driving two browsers against a live server.
 
-- React 18.2.0 for the UI
-- Vite 5.1.0 for development and production builds
-- Socket.io-client 4.7.2 for multiplayer networking
-- Zustand 4.4.0 for global game state
-- Canvas 2D for the actual gameplay rendering layer
+| | |
+|---|---|
+| ![First visit: desktop or mobile?](docs/screenshots/01-device-prompt.png) | ![Main menu](docs/screenshots/02-main-menu.png) |
+| *First visit — choose desktop or mobile mode* | *Main menu (online status, room actions, profile)* |
+| ![Create room](docs/screenshots/03-create-room.png) | ![Room browser](docs/screenshots/04-room-browser.png) |
+| *Create a room — pick a map and settings* | *Room browser — join any listed room* |
+| ![Settings](docs/screenshots/05-settings.png) | ![Multiplayer gameplay](docs/screenshots/06-gameplay-multiplayer.png) |
+| *Settings — audio, visuals, and key rebinding* | *Online match — HUD, minimap, kill feed area* |
+| ![Scoreboard](docs/screenshots/07-scoreboard.png) | ![Pause menu](docs/screenshots/08-pause-menu.png) |
+| *Scoreboard (hold Tab)* | *Pause menu with cheat-code presets* |
+| ![Combat](docs/screenshots/09-combat.png) | ![Grenade explosion](docs/screenshots/10-grenade-explosion.png) |
+| *Combat — tracers and muzzle flash* | *Grenade explosion* |
+| ![Kill feed](docs/screenshots/11-kill-feed.png) | ![Death screen](docs/screenshots/12-death-screen.png) |
+| *Kill feed — top-right of the HUD* | *Death screen with respawn countdown* |
+| ![Arid Canyon](docs/screenshots/13-map-desert.png) | ![Dark Fortress](docs/screenshots/14-map-castle.png) |
+| *Arid Canyon (desert map)* | *Dark Fortress (castle map)* |
+| ![Abandoned Factory](docs/screenshots/15-map-industrial.png) | ![Offline practice](docs/screenshots/16-offline-practice.png) |
+| *Abandoned Factory (industrial map)* | *Offline practice against AI bots* |
 
-### Backend
+<p align="center">
+  <img src="docs/screenshots/17-mobile-mode.png" alt="Mobile mode with dual virtual joysticks" width="300"/><br/>
+  <em>Mobile mode — dual virtual joysticks with touch aiming</em>
+</p>
 
-- Node.js runtime
-- Express 4.18.2 for HTTP endpoints and static file serving
-- Socket.io 4.7.2 for realtime multiplayer communication
-- Native game-loop logic written in plain JavaScript
+---
 
-### Browser and Platform APIs
+## Features at a Glance
 
-- Pointer Lock API for mouse aiming and camera-friendly controls
-- Web Audio API for synthesized sound effects
-- localStorage for username, controls, and settings persistence
+| Area | Details |
+|---|---|
+| Players per room | Up to **8** |
+| Maps | 4 (forest / desert / castle / industrial) |
+| Weapons | 6 (pistol, SMG, shotgun, sniper, rifle, RPG) |
+| Projectiles | Fully simulated server-side with wall bounces for grenades |
+| Movement | Run, jump, **jetpack** (fuel: 100, drains 40/s in flight, regenerates 25/s on the ground) |
+| Pickups | 7 types, respawn continuously (max 10 on a map) |
+| Cheats | 5 codes + master toggle, applied from the pause menu |
+| Offline mode | Full client-side simulation vs 3 AI bots |
+| Mobile | Touch joysticks, drag-to-jump/jetpack, auto-fullscreen |
+| Audio | 100% synthesized at runtime via the Web Audio API — zero audio assets |
 
-## Project Structure
+---
 
-### Root
+## Architecture: What the Frontend and Backend Do
 
-- `index.html` bootstraps the React app and loads the Inter font
-- `vite.config.js` configures the Vite dev server
-- `styles.css` contains the main app styling for the shell and menu screens
-- `package.json` defines the frontend scripts and dependencies
+Grid Wars is a monorepo with two apps:
 
-### Frontend source
+```
+Realtime-Network-Game/
+├── src/                  ← FRONTEND (React + Vite, served on :5173 in dev)
+│   ├── components/       ← screens & HUD (menu, room browser, pause, death, mobile controls…)
+│   ├── engine/           ← canvas renderer, camera, particles, minimap, kill feed
+│   └── game/             ← networking, client prediction, input, offline sim, WebRTC, audio
+└── backend/              ← BACKEND (Express + Socket.IO, served on :3000)
+    ├── server.js         ← HTTP + WebSocket plumbing, REST endpoints, game loop
+    ├── gameRoom.js       ← the authoritative simulation for one room
+    ├── weapons.js        ← weapon stat table
+    ├── physics.js        ← circle-vs-rect collision helpers
+    └── maps/             ← the four map definitions
+```
 
-- `src/main.jsx` mounts the React app into the root DOM node
-- `src/App.jsx` switches between the menu, settings, room browser, create room flow, and gameplay screen
-- `src/store.js` stores global game state in Zustand
-- `src/config.js` defines default controls and persisted settings helpers
-- `src/game/gameClient.js` wraps the Socket.io client and multiplayer actions
-- `src/game/inputManager.js` tracks keyboard, mouse, and pointer-lock state
-- `src/game/audioManager.js` generates procedural sound effects
-- `src/components/` contains the UI screens and overlays
-- `src/engine/` contains the canvas renderer, camera, particles, minimap, weapon drawing, and other visual systems
+### The backend is the referee
 
-### Backend
+`backend/server.js` hosts the HTTP API and Socket.IO, and runs a single **self-correcting game loop** with two fixed timesteps driven by accumulators:
 
-- `backend/server.js` starts the Express/Socket.io server and game loop
-- `backend/gameRoom.js` owns room state and authoritative simulation
-- `backend/physics.js` contains collision and separation helpers
-- `backend/weapons.js` defines the weapon stats and pickup pool
-- `backend/maps/` contains the map definitions and map list helpers
+- **Physics at 60 Hz** — every room's `tick(dt)` advances players, bullets, grenades, gas clouds, pickups and respawns.
+- **Broadcasts at 20 Hz** — every room's state snapshot is emitted to its players, tagged with the server time and the events (shots, hits, kills, pickups…) that happened since the last snapshot. Rooms are deleted automatically when the last player leaves.
 
-## Game Features
+REST endpoints:
 
-### Multiplayer Flow
+| Endpoint | Purpose |
+|---|---|
+| `GET /rooms` | List active rooms (for the room browser) |
+| `GET /maps` | List maps (for the room creator) |
+| `GET /weapons` | Weapon stat table |
 
-- Quick Play searches for any room with space and joins it, or creates a new one if none exist
-- Matchmake queues players and creates a new room when at least two players are waiting
-- Create Room lets me choose a map and create a room directly
-- Browse Rooms shows the current room list, player counts, and join buttons
+The backend also serves the built frontend (`dist/`) statically, so a single server can host the whole game in production.
 
-### Combat and Movement
+Socket events include `create_room`, `join_room`, `quick_join`, `matchmake`, `input`, `shoot`, `grenade`, `gas`, `cheat_code`, `ping`, plus WebRTC signaling (offer/answer/ICE candidate relay).
 
-- Left and right movement with A and D
-- Jumping with W
-- Jetpack movement with Space
-- Mouse aiming
-- Shooting with the mouse button
-- Reloading with R
-- Grenade throwing with G
-- Gas deployment with H
-- Respawning after elimination with a 3 second timer
+`backend/gameRoom.js` is the heart of the simulation: player stats (100 HP, 3-second respawns), weapon firing with ammo and reloads, bullet flight and collisions, grenade arcs with bounces and a 55-damage explosion, gas clouds dealing 8 damage/second, pickup collection within a ~36px radius, spawn-point selection (farthest from other players), and score tracking.
+
+### The frontend is the stage
+
+- **`src/engine/`** — a hand-rolled canvas renderer: camera with smoothing/shake/zoom, layered map rendering, animated characters with weapons, particles (muzzle flash, bullet hits, explosions, jetpack flames), the minimap, the scoreboard, and the kill feed.
+- **`src/game/gameClient.js`** — the online client: sends inputs, keeps a **locally predicted copy of your player** so movement feels instant, and reconciles with the server (see [Networking Internals](#networking-internals)).
+- **`src/game/offlinePractice.js` + `offlineBrain.js`** — a complete duplicate of the simulation that runs purely in your browser against three bots (Atlas, Nova, Echo, Blaze, Viper and Rook rotate in), including cheat support.
+- **`src/game/inputManager.js`** — pointer lock, mouse aiming, and fully rebindable keyboard controls (persisted to `localStorage`).
+- **`src/game/audioManager.js`** — every sound effect (shots, hits, explosions, jetpack, UI) is synthesized on the fly with oscillators and noise buffers.
+- **`src/components/`** — the React UI around the canvas: main menu, room creation with a map picker, room browser, settings, pause menu with cheat presets, death screen, device-mode prompt, and the mobile touch controls.
+- **State** is managed with Zustand (`src/store.js`) — screens, world snapshots, the predicted local player, cheat flags, mobile mode.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js 18+** (tested on Node 22) and npm
+
+### 1. Start the backend
+
+```bash
+cd backend
+npm install
+npm start          # → http://localhost:3000
+```
+
+You should see: `Server on :3000 | physics 60Hz | broadcast 20Hz`.
+
+### 2. Start the frontend
+
+In a second terminal, from the repo root:
+
+```bash
+npm install
+npm run dev        # → http://localhost:5173
+```
+
+Open **http://localhost:5173**, choose *Desktop* (or *Mobile* to try touch controls), set a username, and hit **Create Room** or **Browse**.
+
+> **Tip:** the dev frontend talks to the backend at `VITE_API_BASE_URL` (default `http://localhost:3000`). The main-menu status dot shows whether the backend is reachable.
+
+### 3. Play
+
+- **Online:** Create a room (pick a map), then open the site in another browser/profile, choose **Browse**, and join the listed room. Up to 8 players can join this way. **Quick Play** / matchmaking will find or make a room for you.
+- **Offline:** click **Offline Practice** to fight three AI bots with the full simulation running client-side — no backend needed for game logic (only the menu status check uses it).
+- **Production-style:** run `npm run build` at the root, then `npm start` in `backend/` — the backend serves the built game from `dist/` on port 3000.
+
+---
+
+## Configuration
+
+### Environment variables
+
+**Frontend** (root `.env` — see `.env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_API_BASE_URL` | `http://localhost:3000` | Where the game server lives |
+
+**Backend** (`backend/.env` — see `backend/.env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | HTTP + WebSocket port |
+| `CORS_ORIGIN` | `*` | Comma-separated list of allowed frontend origins |
+
+### Default controls (all rebindable in Settings)
+
+| Action | Key |
+|---|---|
+| Move left / right | `A` / `D` |
+| Jump | `W` |
+| Jetpack (hold) | `Space` |
+| Shoot | Left mouse |
+| Grenade | `G` |
+| Gas | `H` |
+| Reload | `R` |
+| Pause / cheat menu | `Escape` |
+| Scoreboard (hold) | `Tab` |
+
+### Settings
+
+Music and SFX volume, camera shake, particles, and minimap visibility — plus full key rebinding including the mouse buttons. Settings persist in `localStorage`.
+
+---
+
+## Gameplay Guide
 
 ### Weapons
 
-The game includes these weapons:
-
-- Pistol
-- SMG
-- Shotgun
-- Sniper
-- Assault Rifle
-- RPG
-
-Each weapon has its own damage, fire rate, spread, magazine size, reload time, projectile speed, and visual/audio behavior.
-
-### Pickups and Powerups
-
-The server spawns pickups on maps and supports these pickup types:
-
-- Health
-- Armor
-- Jet fuel
-- Grenades
-- Weapon pickups
-- Speed boost
-- Rapid fire
-
-### Match Feedback
-
-- Hit markers and bullet impact effects
-- Explosion effects
-- Kill feed notifications
-- Scoreboard overlay
-- Minimap
-- Respawn overlay after death
-- Camera shake on combat events
-
-## Controls
-
-I set the default controls in `src/config.js` and exposed them in the Settings screen so they can be changed and saved.
-
-- A and D: move left and right
-- W: jump
-- Space: jetpack
-- Mouse: aim
-- Left click: shoot
-- R: reload
-- G: throw grenade
-- H: deploy gas
-- Tab: scoreboard
-- Escape: pause
-
-## Gameplay Systems
-
-### Server-Authoritative Simulation
-
-The server owns the truth for the world. Players do not directly control their final positions in the browser; instead, the client sends inputs and the server simulates movement, gravity, collisions, projectiles, grenades, damage, pickup collection, death, and respawn timing.
-
-This is important because it makes the multiplayer state more consistent across clients and reduces the chance of desync from local-only simulation.
-
-### Client-Side Prediction
-
-The client keeps movement feeling responsive by predicting its own horizontal movement locally. It sends movement input with sequence numbers, then later reconciles with the server snapshot by removing acknowledged inputs and replaying the remaining pending movement.
-
-That gives the game a responsive feel without giving the client authority over the world.
-
-### Physics
-
-The physics layer handles:
-
-- Circle-versus-rectangle collision checks
-- Player-versus-platform collision resolution
-- Bullet-versus-platform collision checks
-- Bullet-versus-player hit detection
-- Player-versus-player separation so players do not overlap
-
-### Combat
-
-I added several combat mechanics on the server:
-
-- Bullet projectiles with weapon-specific spread, speed, damage, and knockback
-- Grenades with travel, bounce, fuse timer, and explosion damage
-- Gas clouds with area damage over time
-- Armor that absorbs part of incoming damage
-- Respawn handling with score tracking
-- Pickup collection and timed powerups
-
-### Player State
-
-Each player tracks data such as:
-
-- Position and velocity
-- Aim angle and facing direction
-- Health and armor
-- Current weapon and ammo
-- Reload state
-- Jetpack fuel and jetpack activity
-- Grenades and gas canisters
-- Powerup timers
-- Kills and deaths
-- Respawn timer
-
-## Networking and Multiplayer Flow
-
-### Connection Setup
-
-The client creates a Socket.io connection from `src/game/gameClient.js`. The backend base URL comes from `VITE_API_BASE_URL`, which defaults to `http://localhost:3000` for local development.
-
-### Server Events
-
-The backend exposes these HTTP endpoints:
-
-- `GET /rooms` for the active room list
-- `GET /maps` for the available maps
-- `GET /weapons` for the weapon catalog
-
-The Socket.io server listens for:
-
-- `create_room`
-- `join_room`
-- `quick_join`
-- `matchmake`
-- `input`
-- `shoot`
-- `grenade`
-- `gas`
-- `leave_room`
-
-### Room Join Flow
-
-When a player joins a room, the server sends a `room_joined` payload containing:
-
-- The room ID
-- A full world snapshot
-- Map metadata
-- The weapon table
-
-The server also broadcasts player join and leave events to everyone in the room.
-
-### World Updates
-
-The server runs a fixed game loop at 60 ticks per second. Every tick it:
-
-- Processes queued inputs
-- Updates the world simulation
-- Applies physics and collision resolution
-- Handles pickups, damage, projectiles, grenades, and gas
-- Builds a fresh snapshot
-- Broadcasts `world_state` to the room
-
-### Reconciliation
-
-The client stores pending movement inputs with sequence numbers. When a new world state arrives, it uses the last processed sequence reported by the server to clear acknowledged inputs and replay any remaining ones. That keeps the local player position close to the authoritative state.
-
-## Deployment Environment Variables
-
-For Vercel + Render, I only need two public values:
-
-### Frontend on Vercel
-
-Set this in the Vercel project environment variables:
-
-```bash
-VITE_API_BASE_URL=https://your-backend.onrender.com
-```
-
-This value is used for both REST calls and Socket.IO connections.
-
-### Backend on Render
-
-Set this in the Render service environment variables:
-
-```bash
-CORS_ORIGIN=https://your-frontend.vercel.app
-```
-
-If I want to allow more than one frontend origin, I can separate them with commas:
-
-```bash
-CORS_ORIGIN=https://your-frontend.vercel.app,https://your-preview.vercel.app
-```
-
-### Local Development Defaults
-
-If I am running locally, these are the values to use:
-
-```bash
-VITE_API_BASE_URL=http://localhost:3000
-CORS_ORIGIN=http://localhost:5173
-```
-
-The frontend falls back to `http://localhost:3000` when `VITE_API_BASE_URL` is not set, but for Vercel I should set the env explicitly.
-
-## Rendering and UI
-
-### React Screen Flow
-
-`src/App.jsx` routes the app between these screens:
-
-- Main menu
-- Settings
-- Create room
-- Room browser
-- Playing
-
-### Menu Screens
-
-I built the following screens in `src/components/`:
-
-- `MainMenu.jsx` for username entry, quick play, matchmake, create room, browse rooms, and settings
-- `CreateRoom.jsx` for selecting a map and creating a room
-- `RoomBrowser.jsx` for fetching and joining live rooms
-- `Settings.jsx` for controls, audio, camera shake, particles, minimap, and fullscreen preferences
-- `PauseMenu.jsx` for resume, settings, and quit actions
-- `DeathScreen.jsx` for the elimination overlay and respawn countdown
-- `HUD.jsx` for the in-game bottom HUD and crosshair overlay
-- `GameCanvas.jsx` for the actual input/render loop bridge
-
-### Canvas Rendering
-
-The canvas renderer is split into focused modules:
-
-- `src/engine/renderer.js` orchestrates the frame loop and drawing order
-- `src/engine/camera.js` handles follow, zoom, and shake behavior
-- `src/engine/characterRenderer.js` draws the players
-- `src/engine/weaponRenderer.js` draws bullets, grenades, gas clouds, and pickups
-- `src/engine/mapRenderer.js` draws the current map
-- `src/engine/minimapRenderer.js` draws the minimap
-- `src/engine/effectsRenderer.js` draws the kill feed, scoreboard, and respawn overlay
-- `src/engine/particles.js` creates and animates visual effects
-
-### Audio
-
-I used a synthesized audio approach instead of shipping sound files. `src/game/audioManager.js` creates procedural tones and noise bursts for:
-
-- Shooting
-- Hits
-- Explosions
-- Pickups
-- Death
-- Grenade throws
-- Grenade ticking
-
-That keeps the project self-contained and avoids needing a separate asset pipeline for audio.
-
-## Maps and Weapons
+| Weapon | Damage | Bullet speed | Fire rate | Magazine | Notes |
+|---|---|---|---|---|---|
+| **Pistol** (default) | 18 | 650 px/s | 300 ms | 12 | Reliable all-rounder |
+| **SMG** | 10 | 700 px/s | 80 ms (auto) | 30 | Highest sustained DPS |
+| **Shotgun** | 12 × 6 pellets | 550 px/s | 600 ms | 6 | Devastating up close |
+| **Sniper** | 75 | 1200 px/s | 1200 ms | 5 | 2.5× camera zoom, one-shot territory |
+| **Rifle** | 16 | 750 px/s | 130 ms (auto) | 25 | 1.2× zoom, precise auto fire |
+| **RPG** | 60 (explosive) | 300 px/s | 2500 ms | 1 | 80px blast radius, splash damage |
+
+Weapon pickups (SMG, shotgun, sniper, rifle, RPG) spawn around the map and swap your loadout with a full magazine.
+
+### Pickups & power-ups
+
+| Pickup | Effect |
+|---|---|
+| ❤️ Health | Restores HP |
+| 🛡 Armor | Adds an armor layer |
+| ⛽ Jet fuel | Refills the jetpack |
+| 💣 Grenade | +grenades (you start with 3; 3-second cooldown per throw) |
+| 🔫 Weapon | Random weapon from the pool above |
+| ⚡ Speed | Movement speed boost |
+| 🔥 Rapid fire | Halves your fire rate delay |
+
+Pickups spawn continuously (every 10 seconds, up to 10 at once) at fixed spawn points — expect fights over the good ones.
 
 ### Maps
 
-The backend exposes four maps:
+| Map | Vibe |
+|---|---|
+| **Enchanted Forest** | Layered tree platforms and cliffs with bunkers — the reference layout (2400×1400) |
+| **Arid Canyon** | Open desert sightlines |
+| **Dark Fortress** | Tight castle corridors |
+| **Abandoned Factory** | Industrial platforms and cover |
 
-- Forest
-- Desert
-- Castle
-- Industrial
+Each map has elevated corner spawns, mid-ground platforms, walls/bunkers for cover, and its own spawn points, pickup points and decoration set.
 
-Each map definition provides the data the server and renderer need, including:
+### Cheat codes (a feature, not a secret)
 
-- Width and height
-- Background values
-- Gravity
-- Platforms
-- Walls
-- Spawn points
-- Pickup spawns
-- Decorative elements
+Open the pause menu (`Escape`) and click a preset or type a code:
 
-### Weapons
+| Code | Effect |
+|---|---|
+| `GODMODE` | Infinite health |
+| `INFJETPACK` | Infinite jetpack fuel |
+| `INFBULLETS` | Infinite ammo (no reloads) |
+| `INFLIFE` | Infinite lives |
+| `ALL` | All of the above |
+| `RESET` | Turn everything off |
 
-The weapon definitions in `backend/weapons.js` drive both server combat behavior and the HUD display. The game includes:
+The pause menu shows live ON/OFF status per cheat. Cheats work both online (the server validates and applies them to your player) and in offline practice.
 
-- Pistol for reliable basic shots
-- SMG for fast automatic fire
-- Shotgun for close-range burst damage
-- Sniper for high-damage long-range shots
-- Assault Rifle for balanced automatic fire
-- RPG for explosive damage
+### HUD
 
-Weapon pickups can replace the player’s current weapon when collected.
+- **Top-left**: scoreboard panel (hold `Tab` for the extended version with K/D)
+- **Top-right**: kill feed (`Killer ⚡ Victim`, 4-second lifetime) and the minimap
+- **Bottom**: health, armor, ammo, grenades and jetpack fuel
+- **On death**: a full-screen respawn overlay with a countdown (you respawn after 3 seconds)
 
-## Storage and Settings
+---
 
-I persist player preferences in `localStorage` so the app remembers them across sessions.
+## Networking Internals
 
-## Mobile Controls & Touch Mode
+Grid Wars uses a well-established competitive-FPS networking model, tuned for a browser game:
 
-This project includes a dedicated mobile mode that presents dual on-screen joysticks and a touch-friendly HUD layout.
+1. **Server authority.** The server simulates everything at 60 Hz and broadcasts snapshots at 20 Hz. Hit registration is server-side — no client can claim a hit.
+2. **Client-side prediction.** Your own movement is simulated locally every frame for zero-latency feel. The server only corrects you if you drift more than **50 px** from its truth (anti-cheat snapping).
+3. **Input sequencing & reconciliation.** Inputs carry sequence numbers; on correction the client replays unacknowledged inputs on top of the server state.
+4. **Snapshot interpolation.** Remote players are rendered ~100 ms in the past (adaptive, with a 16-snapshot buffer), smoothed between authoritative snapshots so everyone appears to move fluidly even at 20 Hz.
+5. **RTT measurement.** The client pings the server every 2 seconds to drive the interpolation clock.
+6. **WebRTC peer-to-peer movement (optional fast path).** Player-to-player movement updates can flow over a WebRTC data channel (`movement`, ordered, no retransmits) with Google's public STUN server, using Socket.IO only for signaling — with automatic fallback to plain Socket.IO when WebRTC isn't available.
 
-- Device selection: when the app first loads you are prompted to choose Desktop or Mobile (or let the app detect automatically). Your choice is persisted in `localStorage`.
-- Left joystick: controls movement using an analog virtual axis. Drag the left joystick to move in any direction; horizontal values map to left/right movement and strong upward pushes trigger jump.
-- Right joystick: controls aim and firing. Drag on the right joystick to aim — the client maps the touch position to the canvas world for accurate aiming. Dragging outward beyond a small threshold will auto-fire while the drag is held.
-- Action buttons: reload, grenade, and gas buttons are provided near the right joystick for quick access.
-- HUD layout: to avoid overlapping the touch controls, weapon/ammo and item HUD elements are moved to the top corners when mobile mode is active.
+---
 
-Implementation notes:
-- `src/components/MobileControls.jsx` implements two draggable joystick areas with touch and mouse fallbacks. It updates `src/game/inputManager.js` with a virtual analog axis (`setVirtualAxis`) and virtual actions (`pressAction` / `releaseAction`).
-- `src/components/GameCanvas.jsx` reads the virtual axis from `inputManager.getVirtualAxis()` and maps it to horizontal movement and jump logic when `isMobileMode` is enabled.
-- The app attempts to enter fullscreen automatically when a mobile-mode match starts; there is also a `Toggle Fullscreen` button in the pause menu.
+## Project Structure
 
-Testing tips:
-- Use your browser devtools device emulator (e.g., Samsung Galaxy S20 Ultra size) or an actual mobile device to verify touch behavior.
-- Tune joystick sensitivity by editing the thresholds in `src/components/MobileControls.jsx` and the movement mapping in `src/components/GameCanvas.jsx`.
-
-If you want, I can add a visual joystick knob that follows the touch position, a configurable sensitivity slider in Settings, or record a short GIF showing the controls in action for documentation.
-
-Stored values include:
-
-- Username
-- Control bindings
-- Audio and visual settings
-
-The settings helpers live in `src/config.js` and are used by the menu and input systems.
-
-## How to Run the Project
-
-### Frontend Development
-
-From the repository root:
-
-```bash
-npm install
-npm run dev
+```
+├── index.html                  ← Vite entry (Inter font, root div)
+├── vite.config.js              ← dev server on :5173
+├── vercel.json                 ← frontend deployment (build → dist)
+├── src/
+│   ├── App.jsx                 ← screen switch (menu / settings / rooms / playing)
+│   ├── store.js                ← Zustand global state
+│   ├── config.js               ← default controls, localStorage keys
+│   ├── styles.css              ← all UI styling
+│   ├── components/             ← MainMenu, CreateRoom, RoomBrowser, Settings,
+│   │                             PauseMenu, HUD, DeathScreen, GameCanvas,
+│   │                             DeviceModePrompt, MobileControls
+│   ├── engine/                 ← renderer, camera, characterRenderer, weaponRenderer,
+│   │                             mapRenderer, effectsRenderer (kill feed/scoreboard),
+│   │                             minimapRenderer, particles
+│   └── game/                   ← network, gameClient (online), offlinePractice,
+│                                 offlineBrain (bot AI), webrtcManager, inputManager,
+│                                 clientPhysics, audioManager
+├── backend/
+│   ├── server.js               ← Express + Socket.IO + game loop + REST + static hosting
+│   ├── gameRoom.js             ← authoritative room simulation
+│   ├── weapons.js              ← weapon table
+│   ├── physics.js              ← collision helpers
+│   └── maps/                   ← forest, desert, castle, industrial (+ index)
+└── docs/
+    ├── logo.svg                ← project logo
+    └── screenshots/            ← automated Playwright captures (this README)
 ```
 
-This starts the Vite dev server on port 5173.
+---
 
-### Backend Server
+## Deployment
 
-From the backend folder:
+**Frontend (Vercel):** the repo ships `vercel.json` — connect the repo, Vercel runs `npm run build` and serves `dist/`. Set `VITE_API_BASE_URL` to your backend URL at build time.
 
-```bash
-cd backend
-npm install
-npm start
-```
+**Backend (Render or any Node host):** deploy the `backend/` directory with `npm start` (Node). Configure:
 
-The backend listens on port 3000 by default.
+- `PORT` — Render injects this automatically
+- `CORS_ORIGIN` — your frontend origin(s), comma-separated (defaults to `*`)
 
-### Full Local Setup
+The backend also serves a built frontend from `dist/` if you place one there, so a single service can run the whole game.
 
-For the standard local workflow, I run the frontend and backend in separate terminals:
+---
 
-```bash
-npm install
-cd backend
-npm install
-cd ..
-npm run dev
-cd backend
-npm start
-```
+## Troubleshooting & Known Quirks
 
-### Production Build
+- **The main-menu status dot is red** — the backend isn't reachable. Check that `backend/ npm start` is running and `VITE_API_BASE_URL` points at it.
+- **Can't join a friend's room** — check `CORS_ORIGIN` on the backend includes your frontend's origin (or is `*`), and that both of you are on the same server.
+- **`Portal.bat` files** in the repo root and `backend/` are Windows convenience launchers; their window titles still say "StudentHub" — a leftover from an earlier project. They just start the respective dev servers.
+- **WebRTC console warnings** (`setRemoteDescription … wrong state`) can appear when two players connect at the same moment; they're harmless — the game falls back to Socket.IO transport.
+- **`styles.css`** contains some leftover rules from an earlier grid/board prototype (`.app`, `.board`, `.cell`) that are unused but harmless.
+- Screenshots in `docs/screenshots/` were captured by an automated harness (two headless browsers playing a real match against the live server), which is why the player names/colors vary.
 
-```bash
-npm run build
-cd backend
-npm start
-```
+---
 
-The backend serves the built frontend from `dist/` when it is available.
+## Tech Stack
 
-## Notes and Current Limitations
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, Vite 5, Zustand 4, Socket.IO Client 4.7 |
+| Rendering | HTML5 Canvas (custom engine, no game framework) |
+| Audio | Web Audio API (fully synthesized) |
+| Backend | Node.js, Express 4, Socket.IO 4.7 |
+| Real-time extras | WebRTC DataChannels (movement fast path), Google STUN |
+| Deployment | Vercel (frontend), Render (backend) |
 
-I documented the project as it exists now, which means a few important implementation details are worth calling out:
+---
 
-- The game loop runs at 60 ticks per second, not 20.
-- The project already includes rooms, matchmaking, combat, weapons, projectiles, grenades, gas, respawning, and a scoreboard.
-- The backend uses plain JavaScript rather than TypeScript.
-- Some of the game behavior is intentionally server-led, so the client only predicts part of the movement locally.
-- The server currently trusts incoming input events and does not add explicit rate limiting.
-
-If I keep expanding this project, the most natural next steps are better anti-abuse checks, more map content, more polished UI transitions, and a formal deployment guide.
-
+*Grid Wars — pick a map, grab a rifle, and mind the cliff corners.*

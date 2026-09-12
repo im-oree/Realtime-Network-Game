@@ -298,9 +298,13 @@ function gameLoop() {
     }
   }
 
-  // Schedule next iteration. Using setImmediate keeps the loop tight and
-  // cooperative with the event loop — far more stable than nested setTimeout.
-  setImmediate(gameLoop)
+  // Schedule next iteration. setTimeout keeps the loop cooperative with the
+  // event loop. (setImmediate re-queues on EVERY event-loop turn, which
+  // busy-spins a full CPU core even when no rooms exist; setTimeout(1) still
+  // fires far more often than the 16ms physics tick, so the accumulators
+  // above keep the simulation cadence exact.)
+  const hasRooms = Object.keys(rooms).length > 0
+  setTimeout(gameLoop, hasRooms ? 1 : 50)
 }
 
 // Kick off the loop
